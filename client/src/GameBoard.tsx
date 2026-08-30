@@ -1,11 +1,9 @@
 import {
   useEffect,
-  useId,
   useLayoutEffect,
   useRef,
   useState,
   type ReactElement,
-  type ReactNode,
 } from "react";
 import {
   LOWER_CATEGORIES,
@@ -80,6 +78,8 @@ export function GameBoard({
   const game = room.game!;
   const [pendingScore, setPendingScore] = useState<PendingScore | null>(null);
   const [leaveDialogOpen, setLeaveDialogOpen] = useState(false);
+  const [controlsOpen, setControlsOpen] = useState(false);
+  const [copyFeedback, setCopyFeedback] = useState<"COPIED" | "ERROR" | null>(null);
   const [rollingIndices, setRollingIndices] = useState<number[]>([]);
   const [presentationLocked, setPresentationLocked] = useState(false);
   const [turnTransition, setTurnTransition] = useState<string | null>(null);
@@ -98,8 +98,9 @@ export function GameBoard({
   const currentDisconnected = currentPlayer?.connectionState === "DISCONNECTED_GRACE";
   const allKept = game.rollsUsed > 0 && game.dice.every((die) => die.held);
   const inputLocked = busy || presentationLocked || !connected || currentDisconnected;
-  const canRoll = isMyTurn && game.rollsRemaining > 0 && !allKept && !inputLocked;
-  const canKeep = isMyTurn && game.rollsUsed > 0 && game.rollsRemaining > 0 && !inputLocked;
+  const scoreSelectionOpen = pendingScore !== null;
+  const canRoll = isMyTurn && game.rollsRemaining > 0 && !allKept && !inputLocked && !scoreSelectionOpen;
+  const canKeep = isMyTurn && game.rollsUsed > 0 && game.rollsRemaining > 0 && !inputLocked && !scoreSelectionOpen;
 
   useEffect(() => {
     const mediaQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -166,6 +167,17 @@ export function GameBoard({
   }, []);
 
   useEffect(() => {
+    if (!pendingScore && !leaveDialogOpen) return;
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key !== "Escape") return;
+      if (pendingScore) setPendingScore(null);
+      else setLeaveDialogOpen(false);
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [leaveDialogOpen, pendingScore]);
+
+  useEffect(() => {
     if (!pendingScore) return;
     const selfCard = selfPlayerId ? game.scoreCards[selfPlayerId] : null;
     const stillValid =
@@ -187,7 +199,7 @@ export function GameBoard({
     onSetHeld(heldIndices);
   }
 
-  function openScoreDialog(category: ScoreCategory, score: number): void {
+  function selectScore(category: ScoreCategory, score: number): void {
     if (inputLocked) return;
     setPendingScore({ category, score, revision: room.revision });
   }
@@ -197,6 +209,17 @@ export function GameBoard({
     const category = pendingScore.category;
     setPendingScore(null);
     onScore(category);
+  }
+
+  async function copyInvite(): Promise<void> {
+    const inviteUrl = `${window.location.origin}/yacht/r/${room.id}`;
+    try {
+      await navigator.clipboard.writeText(inviteUrl);
+      setCopyFeedback("COPIED");
+    } catch {
+      setCopyFeedback("ERROR");
+    }
+    window.setTimeout(() => setCopyFeedback(null), 2_000);
   }
 
   const standings = game.playerOrder
@@ -209,173 +232,138 @@ export function GameBoard({
 
   return (
     <section className="game-layout">
-      <header className="game-heading">
-        <div>
-          <p className="eyebrow">TABLE {room.id}</p>
-          <h1>Yacht Dice</h1>
-        </div>
-        <div className="game-heading-status" aria-live="polite">
-          <span>{game.phase === "FINISHED" ? "GAME OVER" : "CURRENT PLAYER"}</span>
-          <strong>
-            {game.phase === "FINISHED"
-              ? "게임 종료"
-              : currentDisconnected
-                ? `${currentPlayer?.nickname ?? "플레이어"}님의 재접속을 기다리는 중`
-                : isMyTurn
-                  ? "내 차례입니다"
-                  : `${currentPlayer?.nickname ?? "플레이어"}님의 차례입니다`}
-          </strong>
-        </div>
-      </header>
-
       <div className="tabletop-board">
-        {turnTransition && (
-          <div className="turn-transition" role="status">
-            {turnTransition}
-          </div>
-        )}
-        <ScoreSheet
-          busy={inputLocked}
-          isMyTurn={isMyTurn}
-          onConfirmScore={openScoreDialog}
-          playersById={playersById}
-          room={room}
-          selfPlayerId={selfPlayerId}
-        />
-
-        <section className="dice-station" aria-label="Dice tray">
-          {game.phase === "FINISHED" ? (
-            <ResultPanel
-              busy={busy}
-              isHost={room.hostPlayerId === selfPlayerId}
-              onReturnToLobby={onReturnToLobby}
-              standings={standings}
-              winnerPlayerIds={game.winnerPlayerIds}
-            />
-          ) : (
-            <div className="turn-card">
-              <span>TURN</span>
-              <strong>{game.round}<small>/12</small></strong>
-              <p>{isMyTurn ? "주사위를 선택하세요" : "상대의 플레이를 기다립니다"}</p>
-            </div>
-          )}
-
-          <div className="dice-tray">
-            <div className="keep-zone">
-              <div className="tray-label">
-                <strong>KEEP</strong>
-                <span>보관한 주사위</span>
-              </div>
-              <div className="keep-slots">
-                {game.dice.map((die, index) => (
-                  <div className={die.held ? "keep-slot occupied" : "keep-slot"} key={index}>
-                    {die.held ? (
-                      <DieButton
-                        canInteract={canKeep}
-                        die={die}
-                        index={index}
-                        kept
-                        onClick={() => toggleKept(index)}
-                        rolling={false}
-                      />
-                    ) : (
-                      <span aria-hidden="true" className="slot-number">{index + 1}</span>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-
-            <div className="roll-zone">
-              <span className="felt-label">ROLL AREA</span>
-              <div className="rolling-dice">
-                {game.dice.map((die, index) =>
-                  die.held ? null : (
-                    <DieButton
-                      canInteract={canKeep && die.value !== null}
-                      die={die}
-                      index={index}
-                      kept={false}
-                      key={index}
-                      onClick={() => toggleKept(index)}
-                      rolling={rollingIndices.includes(index)}
-                    />
-                  ),
-                )}
-                {allKept && (
-                  <p className="all-kept-message">모든 주사위를 KEEP했습니다.</p>
-                )}
-              </div>
-            </div>
-          </div>
-
-          <button
-            className="roll-again-button"
-            disabled={!canRoll}
-            onClick={onRoll}
-            type="button"
-          >
-            {busy ? "처리 중..." : game.rollsUsed === 0 ? "Roll Dice" : "Roll Again"}
-          </button>
-          <p className="rolls-left">{game.rollsRemaining} rolls left</p>
-          {allKept && isMyTurn ? (
-            <p className="keep-help all-kept-help">
-              점수를 선택하거나 KEEP을 해제해 주세요.
-            </p>
-          ) : game.rollsUsed > 0 && game.rollsRemaining > 0 && isMyTurn && (
-            <p className="keep-help">주사위를 누르면 KEEP 영역으로 이동합니다.</p>
-          )}
-        </section>
-      </div>
-
-      <div className="game-footer-actions">
-        <button
-          className="button danger"
-          disabled={busy}
-          onClick={() => setLeaveDialogOpen(true)}
-          type="button"
-        >
-          방 나가기
-        </button>
-      </div>
-
-      {pendingScore && (
-        <ConfirmationDialog
-          confirmLabel={`${pendingScore.score}점 기록`}
-          danger={pendingScore.score === 0}
-          onCancel={() => setPendingScore(null)}
-          onConfirm={submitScore}
-          title={categoryLabels[pendingScore.category]}
-        >
-          {pendingScore.score === 0 ? (
-            <>
-              <strong>0점으로 기록됩니다.</strong>
-              <p>이 점수 칸은 이후 다시 사용할 수 없습니다.</p>
-            </>
-          ) : (
-            <p><strong>{pendingScore.score}점</strong>을 기록하시겠습니까?</p>
-          )}
-        </ConfirmationDialog>
-      )}
-
-      {leaveDialogOpen && (
-        <ConfirmationDialog
-          confirmLabel="게임에서 나가기"
-          danger
-          onCancel={() => setLeaveDialogOpen(false)}
-          onConfirm={() => {
+        <TableControls
+          busy={busy}
+          connected={connected}
+          controlsOpen={controlsOpen}
+          copyFeedback={copyFeedback}
+          gamePhase={game.phase}
+          leaveConfirmOpen={leaveDialogOpen}
+          onCancelLeave={() => setLeaveDialogOpen(false)}
+          onConfirmLeave={() => {
             setLeaveDialogOpen(false);
             onLeave();
           }}
-          title="게임에서 나가시겠습니까?"
-        >
-          {game.phase === "PLAYING" ? (
-            <p>진행 중 나가면 현재 게임은 종료되고 남은 플레이어는 로비로 돌아갑니다.</p>
-          ) : (
-            <p>방을 나가면 남은 플레이어는 로비로 돌아갑니다.</p>
-          )}
-        </ConfirmationDialog>
-      )}
+          onCopyInvite={() => void copyInvite()}
+          onOpenLeave={() => setLeaveDialogOpen(true)}
+          onToggle={() => {
+            setControlsOpen((open) => !open);
+            setLeaveDialogOpen(false);
+          }}
+          roomId={room.id}
+        />
+
+        <div className="tabletop-pieces">
+          <ScoreSheet
+            busy={inputLocked}
+            currentDisconnected={Boolean(currentDisconnected)}
+            currentPlayerName={currentPlayer?.nickname ?? "플레이어"}
+            isMyTurn={isMyTurn}
+            onCancelScore={() => setPendingScore(null)}
+            onConfirmScore={selectScore}
+            onSubmitScore={submitScore}
+            pendingScore={pendingScore}
+            playersById={playersById}
+            room={room}
+            selfPlayerId={selfPlayerId}
+            turnTransition={turnTransition}
+          />
+
+          <section className="dice-station" aria-label="Dice tray">
+            {game.phase === "FINISHED" && (
+              <ResultPanel
+                busy={busy}
+                isHost={room.hostPlayerId === selfPlayerId}
+                onReturnToLobby={onReturnToLobby}
+                standings={standings}
+                winnerPlayerIds={game.winnerPlayerIds}
+              />
+            )}
+
+            <div className="dice-tray">
+              <div className="keep-zone">
+                <div className="tray-label">
+                  <strong>KEEP</strong>
+                  <span>굴리지 않을 주사위</span>
+                </div>
+                <div className="keep-slots">
+                  {game.dice.map((die, index) => (
+                    <div className={die.held ? "keep-slot occupied" : "keep-slot"} key={index}>
+                      {die.held ? (
+                        <DieButton
+                          canInteract={canKeep}
+                          die={die}
+                          index={index}
+                          kept
+                          onClick={() => toggleKept(index)}
+                          rolling={false}
+                        />
+                      ) : (
+                        <span aria-hidden="true" className="slot-number">{index + 1}</span>
+                      )}
+                    </div>
+                  ))}
+                </div>
+              </div>
+
+              <div className="roll-zone">
+                <span className="felt-label">ROLLING FELT</span>
+                <div className="rolling-dice">
+                  {game.dice.map((die, index) =>
+                    die.held ? null : (
+                      <DieButton
+                        canInteract={canKeep && die.value !== null}
+                        die={die}
+                        index={index}
+                        kept={false}
+                        key={index}
+                        onClick={() => toggleKept(index)}
+                        rolling={rollingIndices.includes(index)}
+                      />
+                    ),
+                  )}
+                  {allKept && (
+                    <p className="all-kept-message">모든 주사위를 KEEP했습니다.</p>
+                  )}
+                </div>
+              </div>
+
+              <div className="tray-control-rim">
+                <button
+                  className="roll-again-button"
+                  disabled={!canRoll}
+                  onClick={onRoll}
+                  type="button"
+                >
+                  {game.phase === "FINISHED"
+                    ? "GAME COMPLETE"
+                    : busy
+                      ? "처리 중..."
+                      : game.rollsUsed === 0
+                        ? "ROLL DICE"
+                        : "ROLL AGAIN"}
+                </button>
+                <div className="roll-readout" aria-live="polite">
+                  <span>ROLLS LEFT</span>
+                  <strong>{game.phase === "FINISHED" ? "—" : game.rollsRemaining}</strong>
+                </div>
+                <p className={allKept ? "keep-help all-kept-help" : "keep-help"}>
+                  {game.phase === "FINISHED"
+                    ? "최종 점수표를 확인하세요"
+                    : allKept && isMyTurn
+                      ? "점수를 기록하거나 KEEP을 해제하세요"
+                      : game.rollsUsed > 0 && isMyTurn
+                        ? "주사위를 눌러 KEEP"
+                        : isMyTurn
+                          ? "주사위를 굴려 시작하세요"
+                          : "상대의 플레이를 기다리는 중"}
+                </p>
+              </div>
+            </div>
+          </section>
+        </div>
+      </div>
     </section>
   );
 }
@@ -441,33 +429,153 @@ function CategoryLabel({ category }: { category: ScoreCategory }): ReactElement 
   );
 }
 
+function TableControls({
+  roomId,
+  connected,
+  busy,
+  controlsOpen,
+  copyFeedback,
+  gamePhase,
+  leaveConfirmOpen,
+  onToggle,
+  onCopyInvite,
+  onOpenLeave,
+  onCancelLeave,
+  onConfirmLeave,
+}: {
+  roomId: string;
+  connected: boolean;
+  busy: boolean;
+  controlsOpen: boolean;
+  copyFeedback: "COPIED" | "ERROR" | null;
+  gamePhase: "PLAYING" | "FINISHED";
+  leaveConfirmOpen: boolean;
+  onToggle: () => void;
+  onCopyInvite: () => void;
+  onOpenLeave: () => void;
+  onCancelLeave: () => void;
+  onConfirmLeave: () => void;
+}): ReactElement {
+  return (
+    <aside className="table-controls">
+      <button
+        aria-controls="table-controls-shelf"
+        aria-expanded={controlsOpen}
+        className="table-plaque"
+        onClick={onToggle}
+        type="button"
+      >
+        <span>{roomId}</span>
+        <strong className={connected ? "network-online" : "network-offline"}>
+          {connected ? "ONLINE" : "RECONNECTING"} <i aria-hidden="true" />
+        </strong>
+        <b aria-hidden="true">{controlsOpen ? "CLOSE" : "MENU"}</b>
+      </button>
+
+      {controlsOpen && (
+        <div className="table-controls-shelf" id="table-controls-shelf">
+          <div className="shelf-heading">
+            <span>TABLE MENU</span>
+            <strong>{roomId}</strong>
+          </div>
+          <div className="shelf-status">
+            <span>NETWORK</span>
+            <strong className={connected ? "network-online" : "network-offline"}>
+              {connected ? "ONLINE" : "연결 복구 중"} <i aria-hidden="true" />
+            </strong>
+          </div>
+          <button className="shelf-action" onClick={onCopyInvite} type="button">
+            {copyFeedback === "COPIED" ? "초대 링크 복사 완료" : "초대 링크 복사"}
+          </button>
+          {copyFeedback === "ERROR" && (
+            <p className="shelf-feedback" role="status">/yacht/r/{roomId} 링크를 직접 복사해 주세요.</p>
+          )}
+
+          {leaveConfirmOpen ? (
+            <div className="shelf-leave-confirm" role="group" aria-label="게임 나가기 확인">
+              <strong>테이블을 나갈까요?</strong>
+              <p>
+                {gamePhase === "PLAYING"
+                  ? "진행 중 나가면 게임이 종료되고 모두 로비로 돌아갑니다."
+                  : "방을 나가면 남은 플레이어는 로비로 돌아갑니다."}
+              </p>
+              <div>
+                <button autoFocus onClick={onCancelLeave} type="button">취소</button>
+                <button className="confirm-leave" disabled={busy} onClick={onConfirmLeave} type="button">
+                  나가기
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button className="shelf-action shelf-leave" disabled={busy} onClick={onOpenLeave} type="button">
+              게임에서 나가기
+            </button>
+          )}
+        </div>
+      )}
+    </aside>
+  );
+}
+
 function ScoreSheet({
   room,
   selfPlayerId,
   isMyTurn,
   busy,
+  currentPlayerName,
+  currentDisconnected,
+  pendingScore,
+  turnTransition,
   playersById,
   onConfirmScore,
+  onCancelScore,
+  onSubmitScore,
 }: {
   room: PublicRoomSnapshot;
   selfPlayerId: string | null;
   isMyTurn: boolean;
   busy: boolean;
+  currentPlayerName: string;
+  currentDisconnected: boolean;
+  pendingScore: PendingScore | null;
+  turnTransition: string | null;
   playersById: Map<string, PublicRoomSnapshot["players"][number]>;
   onConfirmScore: (category: ScoreCategory, score: number) => void;
+  onCancelScore: () => void;
+  onSubmitScore: () => void;
 }): ReactElement {
   const game = room.game!;
+  const scoreScrollRef = useRef<HTMLDivElement>(null);
+  const currentHeaderRef = useRef<HTMLTableCellElement>(null);
   const columnClass = (playerId: string): string =>
     [
       playerId === selfPlayerId ? "self-column" : "",
       playerId === game.currentPlayerId ? "current-column" : "",
+      game.winnerPlayerIds.includes(playerId) ? "winner-column" : "",
     ]
       .filter(Boolean)
       .join(" ");
 
+  useLayoutEffect(() => {
+    const scroller = scoreScrollRef.current;
+    const header = currentHeaderRef.current;
+    if (!scroller || !header || scroller.scrollWidth <= scroller.clientWidth) return;
+    const stickyCategoryWidth = 145;
+    const visibleLeft = scroller.scrollLeft + stickyCategoryWidth;
+    const visibleRight = scroller.scrollLeft + scroller.clientWidth;
+    const headerLeft = header.offsetLeft;
+    const headerRight = headerLeft + header.offsetWidth;
+    if (headerLeft < visibleLeft) {
+      scroller.scrollLeft = Math.max(0, headerLeft - stickyCategoryWidth);
+    } else if (headerRight > visibleRight) {
+      scroller.scrollLeft = headerRight - scroller.clientWidth;
+    }
+  }, [game.currentPlayerId, game.playerOrder.length]);
+
   function categoryRow(category: ScoreCategory): ReactElement {
+    const selected = pendingScore?.category === category;
     return (
-      <tr key={category}>
+      <tr className={selected ? "selected-score-row" : ""} key={category}>
         <th scope="row"><CategoryLabel category={category} /></th>
         {game.playerOrder.map((playerId) => {
           const score = game.scoreCards[playerId]!.scores[category];
@@ -479,13 +587,17 @@ function ScoreSheet({
             preview !== undefined &&
             !busy;
           return (
-            <td className={columnClass(playerId)} key={playerId}>
+            <td
+              className={`${columnClass(playerId)}${selected && playerId === selfPlayerId ? " selected-score-cell" : ""}`}
+              key={playerId}
+            >
               {score !== null ? (
                 <strong>{score}</strong>
               ) : preview !== undefined && playerId === game.currentPlayerId ? (
                 <button
                   aria-label={`${categoryLabels[category]}에 ${preview}점 기록`}
-                  className="score-preview"
+                  aria-pressed={selected}
+                  className={selected ? "score-preview selected" : "score-preview"}
                   disabled={!selectable}
                   onClick={() => onConfirmScore(category, preview)}
                   type="button"
@@ -520,25 +632,61 @@ function ScoreSheet({
   }
 
   return (
-    <section className="score-sheet" aria-label="Yacht Dice score sheet">
+    <section className={game.phase === "FINISHED" ? "score-sheet final-score-sheet" : "score-sheet"} aria-label="Yacht Dice score sheet">
       <div className="score-sheet-heading">
-        <div>
-          <span>SCORE SHEET</span>
-          <strong>Turn {game.round}/12</strong>
+        <div className="score-sheet-title">
+          <span>YACHT</span>
+          <strong>SCORE PAD</strong>
         </div>
-        <small>예상 점수를 눌러 기록</small>
+        <div className="score-sheet-state" aria-live="polite">
+          {turnTransition && <span className="score-turn-note">{turnTransition}</span>}
+          <strong>
+            {game.phase === "FINISHED"
+              ? "FINAL SCORES"
+              : currentDisconnected
+                ? `${currentPlayerName} · 재접속 대기`
+                : isMyTurn
+                  ? game.rollsUsed === 0
+                    ? "당신 차례 · 주사위를 굴리세요"
+                    : "당신 차례 · 점수를 선택하세요"
+                  : `${currentPlayerName} 차례`}
+          </strong>
+          <small>{game.phase === "FINISHED" ? "점수표가 최종 결과입니다" : "예상 점수를 눌러 기록"}</small>
+        </div>
+        <div className="score-turn">
+          <span>TURN</span>
+          <strong>{game.round}<small>/12</small></strong>
+        </div>
       </div>
-      <div className="score-table-scroll">
+      <div className="score-table-scroll" ref={scoreScrollRef}>
         <table className="score-table">
           <thead>
             <tr>
               <th scope="col">Categories</th>
-              {game.playerOrder.map((playerId) => (
-                <th className={columnClass(playerId)} key={playerId} scope="col">
-                  {playersById.get(playerId)?.nickname ?? "Unknown"}
-                  {playerId === selfPlayerId && <small>YOU</small>}
-                </th>
-              ))}
+              {game.playerOrder.map((playerId) => {
+                const current = playerId === game.currentPlayerId;
+                const self = playerId === selfPlayerId;
+                const winner = game.winnerPlayerIds.includes(playerId);
+                return (
+                  <th
+                    aria-current={current ? "true" : undefined}
+                    className={columnClass(playerId)}
+                    key={playerId}
+                    ref={current ? currentHeaderRef : undefined}
+                    scope="col"
+                  >
+                    <span className="player-name-line">
+                      {current && <i aria-hidden="true" className="current-player-marker" />}
+                      {playersById.get(playerId)?.nickname ?? "Unknown"}
+                    </span>
+                    {(self || current || winner) && (
+                      <small>
+                        {winner ? "★ WINNER" : [self ? "YOU" : "", current ? "TURN" : ""].filter(Boolean).join(" · ")}
+                      </small>
+                    )}
+                  </th>
+                );
+              })}
             </tr>
           </thead>
           <tbody>
@@ -550,6 +698,29 @@ function ScoreSheet({
           </tbody>
         </table>
       </div>
+      {pendingScore && (
+        <div
+          aria-label={`${categoryLabels[pendingScore.category]} 점수 기록 확인`}
+          className={pendingScore.score === 0 ? "score-confirmation-strip zero-score" : "score-confirmation-strip"}
+          role="group"
+        >
+          <div className="score-confirmation-copy">
+            <span>PENCIL IN</span>
+            <strong>{categoryLabels[pendingScore.category]} · {pendingScore.score}점</strong>
+            <small>
+              {pendingScore.score === 0
+                ? "0점으로 기록하면 이 칸은 다시 사용할 수 없습니다."
+                : "선택한 칸에 이 점수를 기록합니다."}
+            </small>
+          </div>
+          <div className="score-confirmation-actions">
+            <button autoFocus onClick={onCancelScore} type="button">취소</button>
+            <button className={pendingScore.score === 0 ? "record-score zero" : "record-score"} onClick={onSubmitScore} type="button">
+              {pendingScore.score}점 기록
+            </button>
+          </div>
+        </div>
+      )}
     </section>
   );
 }
@@ -570,7 +741,7 @@ function ResultPanel({
   const winners = standings.filter((entry) => winnerPlayerIds.includes(entry.playerId));
   const winnerText = winners.map((entry) => entry.nickname).join(" · ");
   return (
-    <div className="result-panel">
+    <aside className="result-panel" aria-label="Final ranking and rematch">
       <p className="result-kicker">{winners.length > 1 ? "TIE WINNERS" : "WINNER"}</p>
       <h2>{winnerText}{winners.length > 1 ? " 공동 우승" : " 우승"}</h2>
       <p className="result-final-score">Final score {winners[0]?.total ?? 0}</p>
@@ -597,94 +768,16 @@ function ResultPanel({
               onClick={onReturnToLobby}
               type="button"
             >
-              같은 방에서 다시 하기
+              SAME TABLE · 다시 하기
             </button>
-            <p>같은 방을 유지하고 로비로 돌아갑니다. 모두 Ready하면 다시 시작할 수 있습니다.</p>
+            <p>같은 테이블의 로비로 돌아갑니다. 모두 Ready하면 다시 시작할 수 있습니다.</p>
           </>
         ) : (
           <p className="rematch-waiting">
-            방장이 재경기를 준비하면 같은 방에서 다시 플레이할 수 있습니다.
+            방장이 재경기를 준비하는 중… 같은 테이블에서 기다려 주세요.
           </p>
         )}
       </div>
-    </div>
-  );
-}
-
-function ConfirmationDialog({
-  title,
-  children,
-  confirmLabel,
-  danger = false,
-  onCancel,
-  onConfirm,
-}: {
-  title: string;
-  children: ReactNode;
-  confirmLabel: string;
-  danger?: boolean;
-  onCancel: () => void;
-  onConfirm: () => void;
-}): ReactElement {
-  const titleId = useId();
-  const dialogRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key === "Escape") {
-        event.preventDefault();
-        onCancel();
-        return;
-      }
-      if (event.key !== "Tab") return;
-      const focusable = [...(dialogRef.current?.querySelectorAll<HTMLElement>(
-        "button:not(:disabled), [href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex='-1'])",
-      ) ?? [])];
-      const first = focusable[0];
-      const last = focusable.at(-1);
-      if (!first || !last) return;
-      if (event.shiftKey && document.activeElement === first) {
-        event.preventDefault();
-        last.focus();
-      } else if (!event.shiftKey && document.activeElement === last) {
-        event.preventDefault();
-        first.focus();
-      }
-    };
-    window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
-  }, [onCancel]);
-
-  return (
-    <div
-      className="dialog-backdrop"
-      onMouseDown={(event) => {
-        if (event.target === event.currentTarget) onCancel();
-      }}
-    >
-      <div
-        aria-labelledby={titleId}
-        aria-modal="true"
-        className="confirmation-dialog"
-        ref={dialogRef}
-        role="dialog"
-      >
-        <p className="dialog-kicker">CONFIRM</p>
-        <h2 id={titleId}>{title}</h2>
-        <div className="dialog-copy">{children}</div>
-        <div className="dialog-actions">
-          <button autoFocus className="button ghost" onClick={onCancel} type="button">
-            취소
-          </button>
-          <button
-            className={danger ? "button dialog-danger" : "button accent"}
-            onClick={onConfirm}
-            type="button"
-          >
-            {confirmLabel}
-          </button>
-        </div>
-      </div>
-    </div>
+    </aside>
   );
 }

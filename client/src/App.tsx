@@ -450,23 +450,22 @@ export function App(): ReactElement {
     const isHost = self?.id === room.hostPlayerId;
     if (room.status === "STARTED" && room.game) {
       return (
-        <Shell banner={connectionBanner}>
-          <>
-            <ErrorNotice message={error} />
-            <TransientNotice notice={notice} />
-            <GameBoard
-              busy={busy || connection !== "CONNECTED"}
-              connected={connection === "CONNECTED"}
-              onLeave={leaveRoom}
-              onReturnToLobby={returnToLobby}
-              onRoll={rollDice}
-              onScore={scoreCategory}
-              onSetHeld={setHeldDice}
-              room={room}
-              selfPlayerId={selfPlayerId}
-            />
-          </>
-        </Shell>
+        <div className="game-app">
+          {connectionBanner}
+          <ErrorNotice message={error} />
+          <TransientNotice notice={notice} />
+          <GameBoard
+            busy={busy || connection !== "CONNECTED"}
+            connected={connection === "CONNECTED"}
+            onLeave={leaveRoom}
+            onReturnToLobby={returnToLobby}
+            onRoll={rollDice}
+            onScore={scoreCategory}
+            onSetHeld={setHeldDice}
+            room={room}
+            selfPlayerId={selfPlayerId}
+          />
+        </div>
       );
     }
     return (
