@@ -60,7 +60,7 @@ function nicknameError(rawNickname: string): string | null {
   const nickname = rawNickname.normalize("NFC").trim();
   const length = [...nickname].length;
   if (length < 1 || length > 20 || /\p{Cc}/u.test(nickname)) {
-    return "닉네임은 제어 문자 없이 1~20자로 입력해 주세요.";
+    return "ENTER A NICKNAME BETWEEN 1 AND 20 CHARACTERS.";
   }
   return null;
 }
@@ -127,7 +127,7 @@ export function App(): ReactElement {
   const send = useCallback((message: Record<string, unknown>): boolean => {
     const socket = socketRef.current;
     if (!socket || socket.readyState !== WebSocket.OPEN) {
-      setError("서버에 연결 중입니다. 잠시 후 다시 시도해 주세요.");
+      setError("CONNECTING TO THE SERVER. PLEASE TRY AGAIN IN A MOMENT.");
       return false;
     }
     socket.send(JSON.stringify(message));
@@ -147,7 +147,7 @@ export function App(): ReactElement {
           setSelfPlayerId(message.playerId);
           setError(null);
           if (message.reconnected && wasDisconnectedRef.current) {
-            showNotice("게임에 다시 연결되었습니다.");
+            showNotice("RECONNECTED TO THE GAME.");
             wasDisconnectedRef.current = false;
           }
           goToRoom(message.roomId, message.reconnected);
@@ -171,7 +171,7 @@ export function App(): ReactElement {
         case "ERROR": {
           if (message.code === "STALE_REVISION") {
             setError(null);
-            showNotice("최신 게임 상태로 동기화했습니다.");
+            showNotice("SYNCED TO THE LATEST GAME STATE.");
           } else {
             setBusy(false);
             setError(message.message);
@@ -216,7 +216,7 @@ export function App(): ReactElement {
         try {
           handleMessage(JSON.parse(event.data as string) as ServerMessage);
         } catch {
-          setError("서버에서 해석할 수 없는 응답을 받았습니다.");
+          setError("THE SERVER RETURNED AN UNREADABLE RESPONSE.");
         }
       });
       socket.addEventListener("close", () => {
@@ -272,7 +272,7 @@ export function App(): ReactElement {
     event?.preventDefault();
     const normalizedRoomId = normalizeRoomId(roomId);
     if (!ROOM_ID_PATTERN.test(normalizedRoomId)) {
-      setError("방 코드는 8자리 영문 대문자와 숫자로 입력해 주세요.");
+      setError("ENTER AN 8-CHARACTER ROOM CODE.");
       return;
     }
     const savedToken = localStorage.getItem(sessionKey(normalizedRoomId));
@@ -380,14 +380,14 @@ export function App(): ReactElement {
       setCopied(true);
       window.setTimeout(() => setCopied(false), 1_500);
     } catch {
-      setError(`초대 링크를 복사하지 못했습니다: ${url}`);
+      setError(`COULD NOT COPY THE INVITE LINK: ${url}`);
     }
   }
 
   const connectionBanner = connection !== "CONNECTED" && (
     <div className="connection-banner" role="status">
       <span className="connection-dot" />
-      {connection === "CONNECTING" ? "서버에 연결하는 중..." : "연결이 끊겨 재접속 중..."}
+      {connection === "CONNECTING" ? "CONNECTING TO SERVER..." : "CONNECTION LOST · RECONNECTING..."}
     </div>
   );
 
@@ -396,8 +396,8 @@ export function App(): ReactElement {
       <Shell banner={connectionBanner}>
         <section className="card centered">
           <p className="eyebrow">404</p>
-          <h1>올바르지 않은 초대 링크입니다.</h1>
-          <a className="button primary" href={BASE_PATH}>홈으로 돌아가기</a>
+          <h1>INVALID INVITE LINK</h1>
+          <a className="button primary" href={BASE_PATH}>RETURN HOME</a>
         </section>
       </Shell>
     );
@@ -408,8 +408,8 @@ export function App(): ReactElement {
       <Shell banner={connectionBanner}>
         <section className="card centered loading-card">
           <div className="dice-loader" aria-hidden="true">⚄</div>
-          <h1>방에 다시 연결하고 있습니다</h1>
-          <p className="muted">저장된 세션을 확인하는 중입니다.</p>
+          <h1>RECONNECTING TO TABLE</h1>
+          <p className="muted">CHECKING YOUR SAVED SESSION.</p>
           {error && <ErrorNotice message={error} />}
         </section>
       </Shell>
@@ -420,24 +420,24 @@ export function App(): ReactElement {
     return (
       <Shell banner={connectionBanner}>
         <section className="card join-card">
-          <p className="eyebrow">Yacht Dice 초대</p>
-          <h1>방에 참가하세요</h1>
-          <div className="room-code"><span>방 코드</span><strong>{route.roomId}</strong></div>
+          <p className="eyebrow">YACHT DICE INVITE</p>
+          <h1>JOIN THE TABLE</h1>
+          <div className="room-code"><span>ROOM CODE</span><strong>{route.roomId}</strong></div>
           <form onSubmit={(event) => joinRoom(route.roomId!, event)}>
             <label>
-              닉네임
+              NICKNAME
               <input
                 autoComplete="nickname"
                 autoFocus
                 maxLength={40}
-                placeholder="친구들이 알아볼 이름"
+                placeholder="NAME YOUR FRIENDS WILL RECOGNIZE"
                 value={nickname}
                 onChange={(event) => setNickname(event.target.value)}
               />
             </label>
             <ErrorNotice message={error} />
             <button className="button primary" type="submit" disabled={busy}>
-              {busy ? "참가하는 중..." : "방 참가"}
+              {busy ? "JOINING..." : "JOIN TABLE"}
             </button>
           </form>
         </section>
@@ -473,22 +473,22 @@ export function App(): ReactElement {
         <section className="room-layout">
           <div className="room-heading">
             <div>
-              <p className="eyebrow">멀티플레이 로비</p>
-              <h1>방 코드 <span>{room.id}</span></h1>
+              <p className="eyebrow">MULTIPLAYER LOBBY</p>
+              <h1>ROOM <span>{room.id}</span></h1>
             </div>
             <button className="button ghost" type="button" onClick={() => void copyInvite()}>
-              {copied ? "복사 완료" : "초대 링크 복사"}
+              {copied ? "INVITE COPIED" : "COPY INVITE LINK"}
             </button>
           </div>
 
           <div className="card players-card">
               <div className="section-title">
                 <div>
-                  <h2>플레이어</h2>
-                  <p>{room.players.length} / {room.maxPlayers}명</p>
+                  <h2>PLAYERS</h2>
+                  <p>{room.players.length} / {room.maxPlayers}</p>
                 </div>
                 <span className={room.canStart ? "start-state ready" : "start-state"}>
-                  {room.canStart ? "시작 가능" : "Ready 대기 중"}
+                  {room.canStart ? "READY TO START" : "WAITING FOR READY"}
                 </span>
               </div>
               <ul className="player-list">
@@ -499,8 +499,8 @@ export function App(): ReactElement {
                       <div>
                         <strong>{player.isHost && <span className="host-star">★ </span>}{player.nickname}</strong>
                         <small>
-                          {player.id === selfPlayerId ? "나" : `참가 순서 ${player.joinOrder}`}
-                          {player.connectionState === "DISCONNECTED_GRACE" && " · 재접속 대기"}
+                          {player.id === selfPlayerId ? "YOU" : `PLAYER ${player.joinOrder}`}
+                          {player.connectionState === "DISCONNECTED_GRACE" && " · RECONNECTING"}
                         </small>
                       </div>
                     </div>
@@ -517,7 +517,7 @@ export function App(): ReactElement {
           <div className="room-actions">
             {room.status === "LOBBY" && !isHost && (
               <button className="button primary" type="button" onClick={toggleReady} disabled={busy}>
-                {self?.ready ? "Ready 취소" : "Ready"}
+                {self?.ready ? "CANCEL READY" : "READY"}
               </button>
             )}
             {room.status === "LOBBY" && isHost && (
@@ -527,11 +527,11 @@ export function App(): ReactElement {
                 onClick={startGame}
                 disabled={busy || !room.canStart}
               >
-                게임 시작
+                START GAME
               </button>
             )}
             <button className="button danger" type="button" onClick={leaveRoom} disabled={busy}>
-              방 나가기
+              LEAVE ROOM
             </button>
           </div>
         </section>
@@ -545,37 +545,37 @@ export function App(): ReactElement {
         <div className="hero">
           <p className="eyebrow">ROLL TOGETHER</p>
           <h1>Yacht<br /><span>Dice</span></h1>
-          <p>친구들과 함께 Roll하고 Hold하고,<br />12개 점수판을 완성해 Yacht에 도전하세요.</p>
+          <p>ROLL, KEEP, AND SCORE TOGETHER.<br />COMPLETE ALL 12 CATEGORIES AND CLAIM THE YACHT.</p>
           <div className="dice-row" aria-hidden="true"><span>⚁</span><span>⚄</span><span>⚅</span></div>
         </div>
         <div className="card home-card">
           <form onSubmit={createRoom}>
-            <h2>게임 준비하기</h2>
+            <h2>TAKE A SEAT</h2>
             <label>
-              닉네임
+              NICKNAME
               <input
                 autoComplete="nickname"
                 autoFocus
                 maxLength={40}
-                placeholder="사용할 닉네임"
+                placeholder="YOUR TABLE NAME"
                 value={nickname}
                 onChange={(event) => setNickname(event.target.value)}
               />
             </label>
             <label>
-              방 최대 인원
+              MAX PLAYERS
               <select value={maxPlayers} onChange={(event) => setMaxPlayers(Number(event.target.value))}>
                 {Array.from({ length: 7 }, (_, index) => index + 2).map((count) => (
-                  <option key={count} value={count}>{count}명{count === 8 ? " · 기본" : ""}</option>
+                  <option key={count} value={count}>{count}{count === 8 ? " · DEFAULT" : ""}</option>
                 ))}
               </select>
             </label>
-            <button className="button primary" type="submit" disabled={busy}>방 만들기</button>
+            <button className="button primary" type="submit" disabled={busy}>CREATE TABLE</button>
           </form>
-          <div className="divider"><span>또는</span></div>
+          <div className="divider"><span>OR</span></div>
           <form onSubmit={(event) => joinRoom(roomCode, event)}>
             <label>
-              방 코드
+              ROOM CODE
               <input
                 autoComplete="off"
                 inputMode="text"
@@ -585,7 +585,7 @@ export function App(): ReactElement {
                 onChange={(event) => setRoomCode(normalizeRoomId(event.target.value))}
               />
             </label>
-            <button className="button ghost" type="submit" disabled={busy}>방 참가</button>
+            <button className="button ghost" type="submit" disabled={busy}>JOIN TABLE</button>
           </form>
           <ErrorNotice message={error} />
         </div>
@@ -609,7 +609,7 @@ function Shell({
           <span className="brand-die">⚄</span>
           <span><strong>YACHT DICE</strong><small>ONLINE</small></span>
         </a>
-        <span className="phase-badge">PHASE 3</span>
+        <span className="phase-badge">LIVE TABLE</span>
       </header>
       <main>{children}</main>
       <footer>Yacht Dice Online · Server-authoritative tabletop play</footer>

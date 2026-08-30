@@ -526,10 +526,6 @@ export function GameBoard({
 
             <div className="dice-tray">
               <div className="keep-zone">
-                <div className="tray-label">
-                  <strong>KEEP</strong>
-                  <span>DICE NOT TO ROLL</span>
-                </div>
                 <div className="keep-slots">
                   {game.dice.map((die, index) => (
                     <div className={die.held ? "keep-slot occupied" : "keep-slot"} key={index}>
@@ -589,37 +585,37 @@ export function GameBoard({
                   )}
                 </div>
               </div>
-              <div className="tray-control-rim">
-                <button
-                  className="roll-again-button"
-                  disabled={!canRoll}
-                  onClick={onRoll}
-                  type="button"
-                >
-                  {game.phase === "FINISHED"
-                    ? "GAME COMPLETE"
-                    : busy
-                      ? "PLEASE WAIT..."
-                      : game.rollsUsed === 0
-                        ? "ROLL DICE"
-                        : "ROLL AGAIN"}
-                </button>
-                <div className="roll-readout" aria-live="polite">
-                  <span>ROLLS LEFT</span>
-                  <strong>{game.phase === "FINISHED" ? "—" : game.rollsRemaining}</strong>
-                </div>
-                <p className={allKept ? "keep-help all-kept-help" : "keep-help"}>
-                  {game.phase === "FINISHED"
-                    ? "CHECK THE FINAL SCORE"
-                    : allKept && isMyTurn
-                      ? "SCORE OR RELEASE A DIE"
-                      : game.rollsUsed > 0 && isMyTurn
-                        ? "PRESS A DIE TO KEEP"
-                        : isMyTurn
-                          ? "ROLL TO BEGIN"
-                          : "WAITING FOR OPPONENT"}
-                </p>
+            </div>
+            <div className="tray-control-rim">
+              <button
+                className="roll-again-button"
+                disabled={!canRoll}
+                onClick={onRoll}
+                type="button"
+              >
+                {game.phase === "FINISHED"
+                  ? "GAME COMPLETE"
+                  : busy
+                    ? "PLEASE WAIT..."
+                    : game.rollsUsed === 0
+                      ? "ROLL DICE"
+                      : "ROLL AGAIN"}
+              </button>
+              <div className="roll-readout" aria-live="polite">
+                <span>ROLLS LEFT</span>
+                <strong>{game.phase === "FINISHED" ? "—" : game.rollsRemaining}</strong>
               </div>
+              <p className={allKept ? "keep-help all-kept-help" : "keep-help"}>
+                {game.phase === "FINISHED"
+                  ? "CHECK THE FINAL SCORE"
+                  : allKept && isMyTurn
+                    ? "SCORE OR RELEASE A DIE"
+                    : game.rollsUsed > 0 && isMyTurn
+                      ? "PRESS A DIE TO KEEP"
+                      : isMyTurn
+                        ? "ROLL TO BEGIN"
+                        : "WAITING FOR OPPONENT"}
+              </p>
             </div>
           </section>
         </div>
@@ -718,7 +714,7 @@ function CategoryLabel({ category }: { category: ScoreCategory }): ReactElement 
           mark
         )}
       </span>
-      {categoryLabels[category]}
+      <span className="category-name">{categoryLabels[category]}</span>
     </span>
   );
 }
@@ -954,7 +950,7 @@ function ScoreSheet({
                     {current && turnTransition && <span className="score-turn-note">{turnTransition}</span>}
                     <span className="player-name-line">
                       {current && <i aria-hidden="true" className="current-player-marker" />}
-                      {playersById.get(playerId)?.nickname ?? "Unknown"}
+                      <span className="player-name-text">{playersById.get(playerId)?.nickname ?? "Unknown"}</span>
                     </span>
                     {(self || current || winner) && (
                       <small>

@@ -224,7 +224,7 @@ export function createYachtApplication(
     const message: ServerMessage = {
       event: "GAME_ABORTED",
       message:
-        "플레이어가 게임에서 나가 현재 게임이 종료되었습니다. 다시 Ready 후 시작할 수 있습니다.",
+        "A PLAYER LEFT, SO THE GAME ENDED. READY UP TO START AGAIN.",
     };
     for (const player of room.players.values()) {
       const socket = playerSockets.get(player.id);
