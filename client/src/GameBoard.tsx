@@ -503,8 +503,6 @@ export function GameBoard({
         <div className="tabletop-pieces">
           <ScoreSheet
             busy={inputLocked}
-            currentDisconnected={Boolean(currentDisconnected)}
-            currentPlayerName={currentPlayer?.nickname ?? "플레이어"}
             isMyTurn={isMyTurn}
             onConfirmScore={selectScore}
             pendingScore={pendingScore}
@@ -590,10 +588,7 @@ export function GameBoard({
                   )}
                 </div>
               </div>
-
-            </div>
-
-            <div className="tray-control-rim">
+              <div className="tray-control-rim">
                 <button
                   className="roll-again-button"
                   disabled={!canRoll}
@@ -623,6 +618,7 @@ export function GameBoard({
                           ? "주사위를 굴려 시작하세요"
                           : "상대의 플레이를 기다리는 중"}
                 </p>
+              </div>
             </div>
           </section>
         </div>
@@ -826,8 +822,6 @@ function ScoreSheet({
   selfPlayerId,
   isMyTurn,
   busy,
-  currentPlayerName,
-  currentDisconnected,
   pendingScore,
   turnTransition,
   playersById,
@@ -837,8 +831,6 @@ function ScoreSheet({
   selfPlayerId: string | null;
   isMyTurn: boolean;
   busy: boolean;
-  currentPlayerName: string;
-  currentDisconnected: boolean;
   pendingScore: PendingScore | null;
   turnTransition: string | null;
   playersById: Map<string, PublicRoomSnapshot["players"][number]>;
@@ -893,7 +885,7 @@ function ScoreSheet({
               key={playerId}
             >
               {score !== null ? (
-                <strong>{score}</strong>
+                <strong className="score-committed">{score}</strong>
               ) : preview !== undefined && playerId === game.currentPlayerId ? (
                 <button
                   aria-label={`${categoryLabels[category]}에 ${preview}점 기록`}
@@ -938,31 +930,6 @@ function ScoreSheet({
 
   return (
     <section className={game.phase === "FINISHED" ? "score-sheet final-score-sheet" : "score-sheet"} aria-label="Yacht Dice score sheet">
-      <div className="score-sheet-heading">
-        <div className="score-sheet-title">
-          <span>YACHT</span>
-          <strong>SCORE PAD</strong>
-        </div>
-        <div className="score-sheet-state" aria-live="polite">
-          {turnTransition && <span className="score-turn-note">{turnTransition}</span>}
-          <strong>
-            {game.phase === "FINISHED"
-              ? "FINAL SCORES"
-              : currentDisconnected
-                ? `${currentPlayerName} · 재접속 대기`
-                : isMyTurn
-                  ? game.rollsUsed === 0
-                    ? "당신 차례 · 주사위를 굴리세요"
-                    : "당신 차례 · 점수를 선택하세요"
-                  : `${currentPlayerName} 차례`}
-          </strong>
-          <small>{game.phase === "FINISHED" ? "점수표가 최종 결과입니다" : "예상 점수를 눌러 기록"}</small>
-        </div>
-        <div className="score-turn">
-          <span>Turn</span>
-          <strong>{game.round}<small>/12</small></strong>
-        </div>
-      </div>
       <div className="score-table-scroll" ref={scoreScrollRef}>
         <table
           className="score-table"
@@ -971,8 +938,13 @@ function ScoreSheet({
           }}
         >
           <thead>
-            <tr>
-              <th scope="col">Categories</th>
+            <tr className="score-meta-row">
+              <th className="score-turn-cell" scope="col">
+                <span className="score-turn">
+                  <span>Turn</span>
+                  <strong>{game.round}<small>/12</small></strong>
+                </span>
+              </th>
               {game.playerOrder.map((playerId) => {
                 const current = playerId === game.currentPlayerId;
                 const self = playerId === selfPlayerId;
@@ -985,6 +957,7 @@ function ScoreSheet({
                     ref={current ? currentHeaderRef : undefined}
                     scope="col"
                   >
+                    {current && turnTransition && <span className="score-turn-note">{turnTransition}</span>}
                     <span className="player-name-line">
                       {current && <i aria-hidden="true" className="current-player-marker" />}
                       {playersById.get(playerId)?.nickname ?? "Unknown"}
@@ -995,6 +968,24 @@ function ScoreSheet({
                       </small>
                     )}
                   </th>
+                );
+              })}
+            </tr>
+            <tr className="score-category-head-row">
+              <th scope="col">Categories</th>
+              {game.playerOrder.map((playerId) => {
+                const current = playerId === game.currentPlayerId;
+                const self = playerId === selfPlayerId;
+                return (
+                  <td className={columnClass(playerId)} key={playerId}>
+                    {game.phase === "FINISHED"
+                      ? "SCORE"
+                      : current
+                        ? "TURN"
+                        : self
+                          ? "YOU"
+                          : ""}
+                  </td>
                 );
               })}
             </tr>
