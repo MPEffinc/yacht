@@ -64,15 +64,6 @@ const combinationLabels: Partial<Record<ScoreCategory, string>> = {
   SMALL_STRAIGHT: "Small Straight",
 };
 
-const lowerCategoryGlyphs: Partial<Record<ScoreCategory, number[]>> = {
-  CHOICE: [0, 4, 7, 10, 14],
-  FOUR_OF_A_KIND: [1, 3, 11, 13],
-  FULL_HOUSE: [0, 2, 4, 11, 13],
-  SMALL_STRAIGHT: [0, 4, 8, 12],
-  LARGE_STRAIGHT: [0, 4, 7, 10, 14],
-  YACHT: [0, 2, 7, 12, 14],
-};
-
 const ROLL_PRESENTATION_MS = 780;
 
 interface CombinationAlert {
@@ -134,9 +125,11 @@ function createScatterLayout(game: NonNullable<PublicRoomSnapshot["game"]>): Sca
     let point: Pick<ScatterPosition, "x" | "y"> | null = null;
     for (let attempt = 0; attempt < 120; attempt += 1) {
       const candidate = { x: .17 + random() * .66, y: .17 + random() * .66 };
-      const collision = points.some((position) =>
-        Math.hypot(position.x - candidate.x, position.y - candidate.y) < .255,
-      );
+      const collision = points.some((position) => {
+        const deltaX = Math.abs(position.x - candidate.x);
+        const deltaY = Math.abs(position.y - candidate.y);
+        return Math.hypot(deltaX, deltaY) < .255 || (deltaX < .22 && deltaY < .22);
+      });
       const gridLike = points.some((position) =>
         Math.abs(position.x - candidate.x) < .035 || Math.abs(position.y - candidate.y) < .035,
       );
@@ -709,22 +702,10 @@ function PipFace({ value, compact = false }: { value: DieValue | null; compact?:
 
 function CategoryLabel({ category }: { category: ScoreCategory }): ReactElement {
   const face = upperFaces[category];
-  const glyph = lowerCategoryGlyphs[category];
   return (
     <span className="category-label">
       <span aria-hidden="true" className={face ? "category-symbol upper" : "category-symbol lower"}>
-        {face ? (
-          <PipFace compact value={face} />
-        ) : (
-          <span className="category-mark-grid">
-            {glyph?.map((position) => (
-              <i
-                key={position}
-                style={{ gridColumn: position % 5 + 1, gridRow: Math.floor(position / 5) + 1 }}
-              />
-            ))}
-          </span>
-        )}
+        {face ? <PipFace compact value={face} /> : categoryLabels[category].slice(0, 1)}
       </span>
       {categoryLabels[category]}
     </span>
@@ -957,7 +938,7 @@ function ScoreSheet({
           <small>{game.phase === "FINISHED" ? "점수표가 최종 결과입니다" : "예상 점수를 눌러 기록"}</small>
         </div>
         <div className="score-turn">
-          <span>Turn</span>
+          <span>TURN</span>
           <strong>{game.round}<small>/12</small></strong>
         </div>
       </div>
@@ -1001,9 +982,6 @@ function ScoreSheet({
             {UPPER_CATEGORIES.map(categoryRow)}
             {derivedRow("Subtotal", "upperSubtotal")}
             {derivedRow("+35 Bonus", "upperBonus", "derived-row bonus-row")}
-            <tr className="bonus-rule-row">
-              <td colSpan={game.playerOrder.length + 1}>Bonus if Aces–Sixes total 63 points or more</td>
-            </tr>
             {LOWER_CATEGORIES.map(categoryRow)}
             {derivedRow("Total", "total", "total-row")}
           </tbody>
