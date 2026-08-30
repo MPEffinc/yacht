@@ -5,6 +5,7 @@ import {
   useState,
   type CSSProperties,
   type ReactElement,
+  type RefObject,
 } from "react";
 import {
   LOWER_CATEGORIES,
@@ -76,6 +77,92 @@ interface PendingDieFlip {
   expectedRevision: number;
 }
 
+interface ScatterPosition {
+  x: number;
+  y: number;
+  rotation: number;
+  throwX: number;
+  throwY: number;
+  midX: number;
+  midY: number;
+  overshootX: number;
+  spin: number;
+  midSpin: number;
+}
+
+const fallbackScatter: Array<Pick<ScatterPosition, "x" | "y">> = [
+  { x: .2, y: .28 },
+  { x: .54, y: .18 },
+  { x: .79, y: .39 },
+  { x: .34, y: .63 },
+  { x: .68, y: .78 },
+];
+
+function mulberry32(seed: number): () => number {
+  let value = seed >>> 0;
+  return () => {
+    value += 0x6d2b79f5;
+    let mixed = value;
+    mixed = Math.imul(mixed ^ (mixed >>> 15), mixed | 1);
+    mixed ^= mixed + Math.imul(mixed ^ (mixed >>> 7), mixed | 61);
+    return ((mixed ^ (mixed >>> 14)) >>> 0) / 4_294_967_296;
+  };
+}
+
+function scatterSeed(game: NonNullable<PublicRoomSnapshot["game"]>): number {
+  return game.dice.reduce(
+    (seed, die, index) => Math.imul(seed ^ ((die.value ?? 0) + index * 11), 1_677_7619),
+    Math.imul(game.completedTurns + 1, 2_654_435_761) ^ Math.imul(game.rollsUsed + 1, 1_597_334_677),
+  ) >>> 0;
+}
+
+function createScatterLayout(game: NonNullable<PublicRoomSnapshot["game"]>): ScatterPosition[] {
+  const seed = scatterSeed(game);
+  const random = mulberry32(seed);
+  const points: Array<Pick<ScatterPosition, "x" | "y">> = [];
+  let needsFallback = false;
+  for (let index = 0; index < 5; index += 1) {
+    let point: Pick<ScatterPosition, "x" | "y"> | null = null;
+    for (let attempt = 0; attempt < 120; attempt += 1) {
+      const candidate = { x: .17 + random() * .66, y: .17 + random() * .66 };
+      const collision = points.some((position) =>
+        Math.hypot(position.x - candidate.x, position.y - candidate.y) < .255,
+      );
+      const gridLike = points.some((position) =>
+        Math.abs(position.x - candidate.x) < .035 || Math.abs(position.y - candidate.y) < .035,
+      );
+      if (!collision && !gridLike) {
+        point = candidate;
+        break;
+      }
+    }
+    if (!point) {
+      needsFallback = true;
+      break;
+    }
+    points.push(point);
+  }
+  const selectedPoints = needsFallback
+    ? fallbackScatter.map((_, index) => fallbackScatter[(index + (seed % 5)) % 5]!)
+    : points;
+  return selectedPoints.map((selected, index) => {
+    const throwX = 46 + random() * 58;
+    const throwY = 64 + random() * 50;
+    const spin = (index % 2 === 0 ? 1 : -1) * (72 + random() * 78);
+    return {
+      ...selected,
+      rotation: -18 + random() * 36,
+      throwX,
+      throwY,
+      midX: throwX * .32,
+      midY: throwY * .2,
+      overshootX: index % 2 === 0 ? -11 - random() * 6 : 9 + random() * 7,
+      spin,
+      midSpin: spin * .42,
+    };
+  });
+}
+
 function presentationFace(revision: number, dieIndex: number, phase: number): DieValue {
   return ((revision + dieIndex * 3 + phase * 2) % 6 + 1) as DieValue;
 }
@@ -125,6 +212,8 @@ export function GameBoard({
   const previousGameRef = useRef(game);
   const previousRevisionRef = useRef(room.revision);
   const gameBoardRef = useRef<HTMLElement>(null);
+  const scoreDialogRef = useRef<HTMLDivElement>(null);
+  const scoreTriggerRef = useRef<HTMLElement | null>(null);
   const pendingDieFlipsRef = useRef(new Map<number, PendingDieFlip>());
   const rollTimerRef = useRef<number | null>(null);
   const rollFaceTimersRef = useRef<number[]>([]);
@@ -141,6 +230,7 @@ export function GameBoard({
   const scoreSelectionOpen = pendingScore !== null;
   const canRoll = isMyTurn && game.rollsRemaining > 0 && !allKept && !inputLocked && !scoreSelectionOpen;
   const canKeep = isMyTurn && game.rollsUsed > 0 && game.rollsRemaining > 0 && !inputLocked && !scoreSelectionOpen;
+  const scatterLayout = createScatterLayout(game);
 
   useEffect(() => {
     const mediaQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
@@ -257,10 +347,10 @@ export function GameBoard({
         reducedMotion
           ? [{ opacity: .72 }, { opacity: 1 }]
           : [
-              { transform: `translate(${deltaX}px, ${deltaY}px) scale(${startScale})` },
-              { transform: `translate(${deltaX * .08}px, ${deltaY * .08}px) scale(1.035)`, offset: .78 },
-              { transform: "translate(0, -2px) scale(.985)", offset: .9 },
-              { transform: "translate(0, 0) scale(1)" },
+              { translate: `${deltaX}px ${deltaY}px`, scale: `${startScale}` },
+              { translate: `${deltaX * .08}px ${deltaY * .08}px`, scale: "1.035", offset: .78 },
+              { translate: "0 -2px", scale: ".985", offset: .9 },
+              { translate: "0 0", scale: "1" },
             ],
         {
           duration: reducedMotion ? 100 : 340,
@@ -285,9 +375,23 @@ export function GameBoard({
   useEffect(() => {
     if (!pendingScore && !leaveDialogOpen) return;
     const onKeyDown = (event: KeyboardEvent): void => {
-      if (event.key !== "Escape") return;
-      if (pendingScore) setPendingScore(null);
-      else setLeaveDialogOpen(false);
+      if (event.key === "Escape") {
+        if (pendingScore) closeScoreDialog();
+        else setLeaveDialogOpen(false);
+        return;
+      }
+      if (event.key !== "Tab" || !pendingScore || !scoreDialogRef.current) return;
+      const focusable = [...scoreDialogRef.current.querySelectorAll<HTMLElement>("button:not(:disabled)")];
+      const first = focusable[0];
+      const last = focusable.at(-1);
+      if (!first || !last) return;
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
@@ -324,7 +428,15 @@ export function GameBoard({
 
   function selectScore(category: ScoreCategory, score: number): void {
     if (inputLocked) return;
+    scoreTriggerRef.current = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
     setPendingScore({ category, score, revision: room.revision });
+  }
+
+  function closeScoreDialog(): void {
+    setPendingScore(null);
+    window.requestAnimationFrame(() => scoreTriggerRef.current?.focus());
   }
 
   function submitScore(): void {
@@ -383,9 +495,7 @@ export function GameBoard({
             currentDisconnected={Boolean(currentDisconnected)}
             currentPlayerName={currentPlayer?.nickname ?? "플레이어"}
             isMyTurn={isMyTurn}
-            onCancelScore={() => setPendingScore(null)}
             onConfirmScore={selectScore}
-            onSubmitScore={submitScore}
             pendingScore={pendingScore}
             playersById={playersById}
             room={room}
@@ -433,6 +543,32 @@ export function GameBoard({
 
               <div className="roll-zone">
                 <span className="felt-label">ROLLING FELT</span>
+                <div className="rolling-dice">
+                  {game.dice.map((die, index) =>
+                    die.held || die.value === null ? null : (
+                      <DieButton
+                        canInteract={canKeep && die.value !== null}
+                        die={die}
+                        index={index}
+                        kept={false}
+                        key={index}
+                        onClick={() => toggleKept(index)}
+                        rollOrder={rollingIndices.indexOf(index)}
+                        rolling={rollingIndices.includes(index)}
+                        scatter={scatterLayout[index]}
+                        visualValue={visualFaces[index] ?? die.value}
+                      />
+                    ),
+                  )}
+                  {allKept && (
+                    <p className="all-kept-message">모든 주사위를 KEEP했습니다.</p>
+                  )}
+                </div>
+              </div>
+
+            </div>
+
+            <div className="tray-control-rim">
                 {combinationAlert && (
                   <div
                     className={combinationAlert.primary === "YACHT" ? "combination-alert yacht" : "combination-alert"}
@@ -447,29 +583,6 @@ export function GameBoard({
                     )}
                   </div>
                 )}
-                <div className="rolling-dice">
-                  {game.dice.map((die, index) =>
-                    die.held ? null : (
-                      <DieButton
-                        canInteract={canKeep && die.value !== null}
-                        die={die}
-                        index={index}
-                        kept={false}
-                        key={index}
-                        onClick={() => toggleKept(index)}
-                        rollOrder={rollingIndices.indexOf(index)}
-                        rolling={rollingIndices.includes(index)}
-                        visualValue={visualFaces[index] ?? die.value}
-                      />
-                    ),
-                  )}
-                  {allKept && (
-                    <p className="all-kept-message">모든 주사위를 KEEP했습니다.</p>
-                  )}
-                </div>
-              </div>
-
-              <div className="tray-control-rim">
                 <button
                   className="roll-again-button"
                   disabled={!canRoll}
@@ -499,10 +612,17 @@ export function GameBoard({
                           ? "주사위를 굴려 시작하세요"
                           : "상대의 플레이를 기다리는 중"}
                 </p>
-              </div>
             </div>
           </section>
         </div>
+        {pendingScore && (
+          <ScoreConfirmationDialog
+            dialogRef={scoreDialogRef}
+            onCancel={closeScoreDialog}
+            onSubmit={submitScore}
+            pendingScore={pendingScore}
+          />
+        )}
       </div>
     </section>
   );
@@ -516,6 +636,7 @@ function DieButton({
   onClick,
   rolling,
   rollOrder = -1,
+  scatter,
   visualValue,
 }: {
   die: { value: DieValue | null; held: boolean };
@@ -525,9 +646,25 @@ function DieButton({
   onClick: () => void;
   rolling: boolean;
   rollOrder?: number;
+  scatter?: ScatterPosition;
   visualValue: DieValue | null;
 }): ReactElement {
   const action = kept ? "KEEP 해제" : "KEEP 설정";
+  const scatterStyle = scatter
+    ? {
+        "--scatter-x": `${scatter.x * 100}%`,
+        "--scatter-y": `${scatter.y * 100}%`,
+        "--scatter-r": `${scatter.rotation}deg`,
+        "--throw-x": `${scatter.throwX}px`,
+        "--throw-y": `${scatter.throwY}px`,
+        "--throw-mid-x": `${scatter.midX}px`,
+        "--throw-mid-y": `${scatter.midY}px`,
+        "--overshoot-x": `${scatter.overshootX}px`,
+        "--throw-spin": `${scatter.spin}deg`,
+        "--throw-spin-mid": `${scatter.midSpin}deg`,
+        "--roll-delay": `${Math.max(0, rollOrder) * 35}ms`,
+      } as CSSProperties
+    : undefined;
   return (
     <button
       aria-label={`${index + 1}번 주사위, ${die.value ?? "아직 굴리지 않음"}, ${action}`}
@@ -536,11 +673,10 @@ function DieButton({
       data-die-value={die.value ?? "empty"}
       disabled={!canInteract}
       onClick={onClick}
-      style={rolling ? { "--roll-delay": `${Math.max(0, rollOrder) * 35}ms` } as CSSProperties : undefined}
+      style={scatterStyle}
       type="button"
     >
       <PipFace value={visualValue} />
-      {kept && <small>KEEP</small>}
     </button>
   );
 }
@@ -673,8 +809,6 @@ function ScoreSheet({
   turnTransition,
   playersById,
   onConfirmScore,
-  onCancelScore,
-  onSubmitScore,
 }: {
   room: PublicRoomSnapshot;
   selfPlayerId: string | null;
@@ -686,8 +820,6 @@ function ScoreSheet({
   turnTransition: string | null;
   playersById: Map<string, PublicRoomSnapshot["players"][number]>;
   onConfirmScore: (category: ScoreCategory, score: number) => void;
-  onCancelScore: () => void;
-  onSubmitScore: () => void;
 }): ReactElement {
   const game = room.game!;
   const scoreScrollRef = useRef<HTMLDivElement>(null);
@@ -705,7 +837,7 @@ function ScoreSheet({
     const scroller = scoreScrollRef.current;
     const header = currentHeaderRef.current;
     if (!scroller || !header || scroller.scrollWidth <= scroller.clientWidth) return;
-    const stickyCategoryWidth = 165;
+    const stickyCategoryWidth = 150;
     const visibleLeft = scroller.scrollLeft + stickyCategoryWidth;
     const visibleRight = scroller.scrollLeft + scroller.clientWidth;
     const headerLeft = header.offsetLeft;
@@ -804,7 +936,10 @@ function ScoreSheet({
         </div>
       </div>
       <div className="score-table-scroll" ref={scoreScrollRef}>
-        <table className="score-table">
+        <table
+          className="score-table"
+          style={{ minWidth: `${150 + game.playerOrder.length * 135}px` }}
+        >
           <thead>
             <tr>
               <th scope="col">Categories</th>
@@ -843,30 +978,51 @@ function ScoreSheet({
           </tbody>
         </table>
       </div>
-      {pendingScore && (
-        <div
-          aria-label={`${categoryLabels[pendingScore.category]} 점수 기록 확인`}
-          className={pendingScore.score === 0 ? "score-confirmation-strip zero-score" : "score-confirmation-strip"}
-          role="group"
-        >
-          <div className="score-confirmation-copy">
-            <span>PENCIL IN</span>
-            <strong>{categoryLabels[pendingScore.category]} · {pendingScore.score}점</strong>
-            <small>
-              {pendingScore.score === 0
-                ? "0점으로 기록하면 이 칸은 다시 사용할 수 없습니다."
-                : "선택한 칸에 이 점수를 기록합니다."}
-            </small>
-          </div>
-          <div className="score-confirmation-actions">
-            <button autoFocus onClick={onCancelScore} type="button">취소</button>
-            <button className={pendingScore.score === 0 ? "record-score zero" : "record-score"} onClick={onSubmitScore} type="button">
-              {pendingScore.score}점 기록
-            </button>
-          </div>
-        </div>
-      )}
     </section>
+  );
+}
+
+function ScoreConfirmationDialog({
+  pendingScore,
+  dialogRef,
+  onCancel,
+  onSubmit,
+}: {
+  pendingScore: PendingScore;
+  dialogRef: RefObject<HTMLDivElement | null>;
+  onCancel: () => void;
+  onSubmit: () => void;
+}): ReactElement {
+  const zeroScore = pendingScore.score === 0;
+  return (
+    <div className="score-dialog-backdrop">
+      <div
+        aria-describedby="score-dialog-description"
+        aria-labelledby="score-dialog-title"
+        aria-modal="true"
+        className={zeroScore ? "score-entry-dialog zero-score" : "score-entry-dialog"}
+        ref={dialogRef}
+        role="dialog"
+      >
+        <span className="score-dialog-kicker">SCORE ENTRY</span>
+        <div className="score-entry-slip">
+          <h2 id="score-dialog-title">{categoryLabels[pendingScore.category]}</h2>
+          <strong>{pendingScore.score}</strong>
+          <span>POINTS</span>
+        </div>
+        <p id="score-dialog-description">
+          {zeroScore
+            ? "이 칸은 이후 다시 사용할 수 없습니다."
+            : "이 점수를 기록하시겠습니까?"}
+        </p>
+        <div className="score-dialog-actions">
+          <button autoFocus onClick={onCancel} type="button">취소</button>
+          <button className={zeroScore ? "record-score zero" : "record-score"} onClick={onSubmit} type="button">
+            {pendingScore.score}점 기록
+          </button>
+        </div>
+      </div>
+    </div>
   );
 }
 
