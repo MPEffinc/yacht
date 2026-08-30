@@ -73,21 +73,28 @@ describe("RoomService", () => {
     expectRoomError(() => service.joinRoom(created.room.id, "C"), "ROOM_FULL");
   });
 
-  it("changes each player's Ready state and computes the start condition", () => {
+  it("lets the host start when the guest is ready without requiring host Ready", () => {
     const { service, roomId, host, guest } = createTwoPlayerRoom();
-    expect(service.getSnapshot(roomId).canStart).toBe(false);
-    service.setReady(roomId, host.id, true);
     expect(service.getSnapshot(roomId).canStart).toBe(false);
     service.setReady(roomId, guest.id, true);
     expect(service.getSnapshot(roomId).canStart).toBe(true);
-    expect(service.getSnapshot(roomId).revision).toBe(4);
+    expect(service.getSnapshot(roomId).players.find((player) => player.id === host.id)?.ready).toBe(false);
+    expect(service.getSnapshot(roomId).revision).toBe(3);
     service.setReady(roomId, guest.id, false);
     expect(service.getSnapshot(roomId).canStart).toBe(false);
   });
 
+  it("requires every non-host guest to be ready", () => {
+    const { service, roomId, guest } = createTwoPlayerRoom();
+    const third = service.joinRoom(roomId, "Third").player;
+    service.setReady(roomId, guest.id, true);
+    expect(service.getSnapshot(roomId).canStart).toBe(false);
+    service.setReady(roomId, third.id, true);
+    expect(service.getSnapshot(roomId).canStart).toBe(true);
+  });
+
   it("rejects START_GAME from a non-host", () => {
     const { service, roomId, host, guest } = createTwoPlayerRoom();
-    service.setReady(roomId, host.id, true);
     service.setReady(roomId, guest.id, true);
     expectRoomError(() => service.startGame(roomId, guest.id), "NOT_HOST");
   });
@@ -95,17 +102,15 @@ describe("RoomService", () => {
   it("rejects START_GAME with only one player", () => {
     const service = new RoomService();
     const created = service.createRoom("Solo");
-    service.setReady(created.room.id, created.player.id, true);
     expectRoomError(
       () => service.startGame(created.room.id, created.player.id),
       "NOT_ENOUGH_PLAYERS",
     );
   });
 
-  it("starts normally after every player is ready", () => {
+  it("starts normally after every guest is ready", () => {
     const { service, roomId, host, guest } = createTwoPlayerRoom();
     expectRoomError(() => service.startGame(roomId, host.id), "PLAYERS_NOT_READY");
-    service.setReady(roomId, host.id, true);
     service.setReady(roomId, guest.id, true);
     service.startGame(roomId, host.id);
     expect(service.getSnapshot(roomId).status).toBe("STARTED");
@@ -118,6 +123,8 @@ describe("RoomService", () => {
     service.leaveRoom(roomId, host.id);
     expect(service.getRoom(roomId)?.hostPlayerId).toBe(guest.id);
     expect(service.getRoom(roomId)?.hostPlayerId).not.toBe(third.id);
+    service.setReady(roomId, third.id, true);
+    expect(service.getSnapshot(roomId).canStart).toBe(true);
   });
 
   it("reconnects a disconnected player with the room-specific token", () => {

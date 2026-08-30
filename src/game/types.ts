@@ -60,6 +60,7 @@ export interface PublicGameSnapshot {
   rollsRemaining: number;
   scoreCards: Record<string, PublicScoreCard>;
   availableScores: Partial<Record<ScoreCategory, number>> | null;
+  matchedCombinations: ScoreCategory[];
   round: number;
   completedTurns: number;
   winnerPlayerIds: string[];

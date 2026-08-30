@@ -1,5 +1,10 @@
 import { randomInt } from "node:crypto";
-import { calculateScore, createEmptyScoreCard, scoreCardTotals } from "./scoring.js";
+import {
+  calculateScore,
+  createEmptyScoreCard,
+  matchedCombinations,
+  scoreCardTotals,
+} from "./scoring.js";
 import {
   SCORE_CATEGORIES,
   type DieRoller,
@@ -134,6 +139,7 @@ export function toPublicGameSnapshot(game: YachtGameState): PublicGameSnapshot {
     }),
   );
   let availableScores: PublicGameSnapshot["availableScores"] = null;
+  let combinations: PublicGameSnapshot["matchedCombinations"] = [];
   if (game.phase === "PLAYING" && game.rollsUsed > 0 && game.currentPlayerId) {
     const currentScoreCard = game.scoreCards[game.currentPlayerId]!;
     const values = game.dice.map((die) => die.value) as DieValue[];
@@ -142,6 +148,7 @@ export function toPublicGameSnapshot(game: YachtGameState): PublicGameSnapshot {
         (category) => [category, calculateScore(category, values)],
       ),
     );
+    combinations = matchedCombinations(values);
   }
   const round =
     game.phase === "FINISHED"
@@ -156,6 +163,7 @@ export function toPublicGameSnapshot(game: YachtGameState): PublicGameSnapshot {
     rollsRemaining: Math.max(0, 3 - game.rollsUsed),
     scoreCards,
     availableScores,
+    matchedCombinations: combinations,
     round,
     completedTurns: game.completedTurns,
     winnerPlayerIds: [...game.winnerPlayerIds],

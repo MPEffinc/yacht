@@ -40,6 +40,7 @@ export interface PublicGameSnapshot {
     }
   >;
   availableScores: Partial<Record<ScoreCategory, number>> | null;
+  matchedCombinations: ScoreCategory[];
   round: number;
   completedTurns: number;
   winnerPlayerIds: string[];

@@ -62,6 +62,17 @@ describe("Yacht game state machine", () => {
     expect(game).toEqual(before);
   });
 
+  it("publishes server-derived matched combinations after a roll only", () => {
+    const game = initializeYachtGame(["alice", "bob"]);
+    expect(toPublicGameSnapshot(game).matchedCombinations).toEqual([]);
+    rollGameDice(game, "alice", sequenceRoller([5, 5, 5, 5, 5]));
+    expect(toPublicGameSnapshot(game).matchedCombinations).toEqual([
+      "FOUR_OF_A_KIND",
+      "FULL_HOUSE",
+      "YACHT",
+    ]);
+  });
+
   it("rejects actions before roll and actions from another player", () => {
     const game = initializeYachtGame(["alice", "bob"]);
     expectGameError(() => scoreGameCategory(game, "alice", "CHOICE"), "MUST_ROLL_FIRST");

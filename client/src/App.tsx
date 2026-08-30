@@ -310,7 +310,7 @@ export function App(): ReactElement {
   function toggleReady(): void {
     if (!room || !selfPlayerId) return;
     const self = room.players.find((player) => player.id === selfPlayerId);
-    if (!self) return;
+    if (!self || self.id === room.hostPlayerId) return;
     setError(null);
     setBusy(
       send({ event: "SET_READY", requestId: requestId(), ready: !self.ready }),
@@ -504,8 +504,8 @@ export function App(): ReactElement {
                         </small>
                       </div>
                     </div>
-                    <span className={player.ready ? "ready-badge on" : "ready-badge"}>
-                      {player.ready ? "Ready" : "Not Ready"}
+                    <span className={player.isHost ? "ready-badge host" : player.ready ? "ready-badge on" : "ready-badge"}>
+                      {player.isHost ? "HOST" : player.ready ? "Ready" : "Not Ready"}
                     </span>
                   </li>
                 ))}
@@ -515,7 +515,7 @@ export function App(): ReactElement {
           <ErrorNotice message={error} />
           <TransientNotice notice={notice} />
           <div className="room-actions">
-            {room.status === "LOBBY" && (
+            {room.status === "LOBBY" && !isHost && (
               <button className="button primary" type="button" onClick={toggleReady} disabled={busy}>
                 {self?.ready ? "Ready 취소" : "Ready"}
               </button>

@@ -3,6 +3,7 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  type CSSProperties,
   type ReactElement,
 } from "react";
 import {
@@ -46,6 +47,39 @@ const pipPositions: Record<DieValue, number[]> = {
   6: [0, 2, 3, 5, 6, 8],
 };
 
+const combinationPriority: ScoreCategory[] = [
+  "YACHT",
+  "LARGE_STRAIGHT",
+  "FULL_HOUSE",
+  "FOUR_OF_A_KIND",
+  "SMALL_STRAIGHT",
+];
+
+const combinationLabels: Partial<Record<ScoreCategory, string>> = {
+  YACHT: "YACHT!",
+  LARGE_STRAIGHT: "LARGE STRAIGHT",
+  FULL_HOUSE: "FULL HOUSE",
+  FOUR_OF_A_KIND: "4 OF A KIND",
+  SMALL_STRAIGHT: "SMALL STRAIGHT",
+};
+
+const ROLL_PRESENTATION_MS = 780;
+
+interface CombinationAlert {
+  primary: ScoreCategory;
+  secondary: ScoreCategory[];
+  revision: number;
+}
+
+interface PendingDieFlip {
+  rect: DOMRect;
+  expectedRevision: number;
+}
+
+function presentationFace(revision: number, dieIndex: number, phase: number): DieValue {
+  return ((revision + dieIndex * 3 + phase * 2) % 6 + 1) as DieValue;
+}
+
 interface GameBoardProps {
   room: PublicRoomSnapshot;
   selfPlayerId: string | null;
@@ -81,6 +115,8 @@ export function GameBoard({
   const [controlsOpen, setControlsOpen] = useState(false);
   const [copyFeedback, setCopyFeedback] = useState<"COPIED" | "ERROR" | null>(null);
   const [rollingIndices, setRollingIndices] = useState<number[]>([]);
+  const [visualFaces, setVisualFaces] = useState<Partial<Record<number, DieValue>>>({});
+  const [combinationAlert, setCombinationAlert] = useState<CombinationAlert | null>(null);
   const [presentationLocked, setPresentationLocked] = useState(false);
   const [turnTransition, setTurnTransition] = useState<string | null>(null);
   const [reducedMotion, setReducedMotion] = useState(
@@ -88,7 +124,11 @@ export function GameBoard({
   );
   const previousGameRef = useRef(game);
   const previousRevisionRef = useRef(room.revision);
+  const gameBoardRef = useRef<HTMLElement>(null);
+  const pendingDieFlipsRef = useRef(new Map<number, PendingDieFlip>());
   const rollTimerRef = useRef<number | null>(null);
+  const rollFaceTimersRef = useRef<number[]>([]);
+  const combinationTimerRef = useRef<number | null>(null);
   const turnTimerRef = useRef<number | null>(null);
   const playersById = new Map(room.players.map((player) => [player.id, player]));
   const currentPlayer = game.currentPlayerId
@@ -122,7 +162,7 @@ export function GameBoard({
       game.phase === "PLAYING" &&
       previous.currentPlayerId === game.currentPlayerId &&
       game.rollsUsed === previous.rollsUsed + 1;
-    if (isRollTransition && !reducedMotion) {
+    if (isRollTransition) {
       const rolled = previous.rollsUsed === 0
         ? [0, 1, 2, 3, 4]
         : previous.dice
@@ -131,13 +171,51 @@ export function GameBoard({
             .map((die) => die.index);
       if (rolled.length > 0) {
         if (rollTimerRef.current !== null) window.clearTimeout(rollTimerRef.current);
-        setRollingIndices(rolled);
-        setPresentationLocked(true);
-        rollTimerRef.current = window.setTimeout(() => {
+        rollFaceTimersRef.current.forEach((timer) => window.clearTimeout(timer));
+        rollFaceTimersRef.current = [];
+        if (combinationTimerRef.current !== null) window.clearTimeout(combinationTimerRef.current);
+        setCombinationAlert(null);
+
+        const matched = combinationPriority.filter((category) =>
+          game.matchedCombinations.includes(category),
+        );
+        const revealCombination = (): void => {
+          const primary = matched[0];
+          if (!primary) return;
+          setCombinationAlert({ primary, secondary: matched.slice(1), revision: room.revision });
+          combinationTimerRef.current = window.setTimeout(() => {
+            setCombinationAlert(null);
+            combinationTimerRef.current = null;
+          }, 1_250);
+        };
+
+        if (reducedMotion) {
           setRollingIndices([]);
+          setVisualFaces({});
           setPresentationLocked(false);
-          rollTimerRef.current = null;
-        }, 560);
+          revealCombination();
+        } else {
+          setRollingIndices(rolled);
+          setPresentationLocked(true);
+          setVisualFaces(Object.fromEntries(
+            rolled.map((index) => [index, presentationFace(room.revision, index, 0)]),
+          ));
+          for (const [phase, delay] of [110, 220, 350, 490].entries()) {
+            rollFaceTimersRef.current.push(window.setTimeout(() => {
+              setVisualFaces(Object.fromEntries(
+                rolled.map((index) => [index, presentationFace(room.revision, index, phase + 1)]),
+              ));
+            }, delay));
+          }
+          rollFaceTimersRef.current.push(window.setTimeout(() => setVisualFaces({}), 590));
+          rollTimerRef.current = window.setTimeout(() => {
+            setRollingIndices([]);
+            setVisualFaces({});
+            setPresentationLocked(false);
+            revealCombination();
+            rollTimerRef.current = null;
+          }, ROLL_PRESENTATION_MS);
+        }
       }
     }
 
@@ -161,8 +239,46 @@ export function GameBoard({
     }
   }, [game, reducedMotion, room.players, room.revision, selfPlayerId]);
 
+  useLayoutEffect(() => {
+    if (pendingDieFlipsRef.current.size === 0) return;
+    for (const [index, pending] of pendingDieFlipsRef.current) {
+      if (pending.expectedRevision !== room.revision) {
+        if (pending.expectedRevision < room.revision) pendingDieFlipsRef.current.delete(index);
+        continue;
+      }
+      const element = gameBoardRef.current?.querySelector<HTMLElement>(`[data-die-index="${index}"]`);
+      if (!element) continue;
+      const last = element.getBoundingClientRect();
+      const deltaX = pending.rect.left - last.left;
+      const deltaY = pending.rect.top - last.top;
+      const startScale = pending.rect.width / last.width;
+      element.style.zIndex = "12";
+      const animation = element.animate(
+        reducedMotion
+          ? [{ opacity: .72 }, { opacity: 1 }]
+          : [
+              { transform: `translate(${deltaX}px, ${deltaY}px) scale(${startScale})` },
+              { transform: `translate(${deltaX * .08}px, ${deltaY * .08}px) scale(1.035)`, offset: .78 },
+              { transform: "translate(0, -2px) scale(.985)", offset: .9 },
+              { transform: "translate(0, 0) scale(1)" },
+            ],
+        {
+          duration: reducedMotion ? 100 : 340,
+          easing: "cubic-bezier(.2,.78,.24,1)",
+        },
+      );
+      void animation.finished.then(
+        () => { element.style.zIndex = ""; },
+        () => { element.style.zIndex = ""; },
+      );
+      pendingDieFlipsRef.current.delete(index);
+    }
+  }, [game.dice, reducedMotion, room.revision]);
+
   useEffect(() => () => {
     if (rollTimerRef.current !== null) window.clearTimeout(rollTimerRef.current);
+    rollFaceTimersRef.current.forEach((timer) => window.clearTimeout(timer));
+    if (combinationTimerRef.current !== null) window.clearTimeout(combinationTimerRef.current);
     if (turnTimerRef.current !== null) window.clearTimeout(turnTimerRef.current);
   }, []);
 
@@ -192,6 +308,13 @@ export function GameBoard({
 
   function toggleKept(index: number): void {
     if (!canKeep) return;
+    const element = gameBoardRef.current?.querySelector<HTMLElement>(`[data-die-index="${index}"]`);
+    if (element) {
+      pendingDieFlipsRef.current.set(index, {
+        rect: element.getBoundingClientRect(),
+        expectedRevision: room.revision + 1,
+      });
+    }
     const heldIndices = game.dice
       .map((die, dieIndex) => ({ kept: dieIndex === index ? !die.held : die.held, dieIndex }))
       .filter((entry) => entry.kept)
@@ -231,7 +354,7 @@ export function GameBoard({
     .sort((left, right) => right.total - left.total);
 
   return (
-    <section className="game-layout">
+    <section className="game-layout" ref={gameBoardRef}>
       <div className="tabletop-board">
         <TableControls
           busy={busy}
@@ -270,7 +393,7 @@ export function GameBoard({
             turnTransition={turnTransition}
           />
 
-          <section className="dice-station" aria-label="Dice tray">
+          <section className={game.phase === "FINISHED" ? "dice-station finished" : "dice-station"} aria-label="Dice tray">
             {game.phase === "FINISHED" && (
               <ResultPanel
                 busy={busy}
@@ -298,6 +421,7 @@ export function GameBoard({
                           kept
                           onClick={() => toggleKept(index)}
                           rolling={false}
+                          visualValue={die.value}
                         />
                       ) : (
                         <span aria-hidden="true" className="slot-number">{index + 1}</span>
@@ -309,6 +433,20 @@ export function GameBoard({
 
               <div className="roll-zone">
                 <span className="felt-label">ROLLING FELT</span>
+                {combinationAlert && (
+                  <div
+                    className={combinationAlert.primary === "YACHT" ? "combination-alert yacht" : "combination-alert"}
+                    key={`${combinationAlert.revision}-${combinationAlert.primary}`}
+                    role="status"
+                  >
+                    <strong>{combinationLabels[combinationAlert.primary]}</strong>
+                    {combinationAlert.secondary.length > 0 && (
+                      <small>
+                        ALSO SCORES · {combinationAlert.secondary.map((category) => combinationLabels[category]).join(" · ")}
+                      </small>
+                    )}
+                  </div>
+                )}
                 <div className="rolling-dice">
                   {game.dice.map((die, index) =>
                     die.held ? null : (
@@ -319,7 +457,9 @@ export function GameBoard({
                         kept={false}
                         key={index}
                         onClick={() => toggleKept(index)}
+                        rollOrder={rollingIndices.indexOf(index)}
                         rolling={rollingIndices.includes(index)}
+                        visualValue={visualFaces[index] ?? die.value}
                       />
                     ),
                   )}
@@ -375,6 +515,8 @@ function DieButton({
   canInteract,
   onClick,
   rolling,
+  rollOrder = -1,
+  visualValue,
 }: {
   die: { value: DieValue | null; held: boolean };
   index: number;
@@ -382,6 +524,8 @@ function DieButton({
   canInteract: boolean;
   onClick: () => void;
   rolling: boolean;
+  rollOrder?: number;
+  visualValue: DieValue | null;
 }): ReactElement {
   const action = kept ? "KEEP 해제" : "KEEP 설정";
   return (
@@ -392,9 +536,10 @@ function DieButton({
       data-die-value={die.value ?? "empty"}
       disabled={!canInteract}
       onClick={onClick}
+      style={rolling ? { "--roll-delay": `${Math.max(0, rollOrder) * 35}ms` } as CSSProperties : undefined}
       type="button"
     >
-      <PipFace value={die.value} />
+      <PipFace value={visualValue} />
       {kept && <small>KEEP</small>}
     </button>
   );
@@ -560,7 +705,7 @@ function ScoreSheet({
     const scroller = scoreScrollRef.current;
     const header = currentHeaderRef.current;
     if (!scroller || !header || scroller.scrollWidth <= scroller.clientWidth) return;
-    const stickyCategoryWidth = 145;
+    const stickyCategoryWidth = 165;
     const visibleLeft = scroller.scrollLeft + stickyCategoryWidth;
     const visibleRight = scroller.scrollLeft + scroller.clientWidth;
     const headerLeft = header.offsetLeft;
@@ -602,7 +747,7 @@ function ScoreSheet({
                   onClick={() => onConfirmScore(category, preview)}
                   type="button"
                 >
-                  ({preview})
+                  {preview}
                 </button>
               ) : (
                 <span className="empty-score">—</span>

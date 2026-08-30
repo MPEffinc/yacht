@@ -203,7 +203,10 @@ export class RoomService {
     const players = [...room.players.values()];
     const connected = players.filter((player) => player.connectionState === "CONNECTED");
     if (connected.length < MIN_PLAYERS) throw new RoomError("NOT_ENOUGH_PLAYERS");
-    if (players.some((player) => player.connectionState !== "CONNECTED" || !player.ready)) {
+    if (
+      players.some((player) => player.connectionState !== "CONNECTED") ||
+      players.some((player) => player.id !== room.hostPlayerId && !player.ready)
+    ) {
       throw new RoomError("PLAYERS_NOT_READY");
     }
     room.status = "STARTED";
@@ -409,9 +412,8 @@ export class RoomService {
       canStart:
         room.status === "LOBBY" &&
         players.length >= MIN_PLAYERS &&
-        players.every(
-          (player) => player.connectionState === "CONNECTED" && player.ready,
-        ),
+        players.every((player) => player.connectionState === "CONNECTED") &&
+        players.every((player) => player.id === room.hostPlayerId || player.ready),
       players: players.map((player) => ({
         id: player.id,
         nickname: player.nickname,

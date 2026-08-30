@@ -41,7 +41,6 @@ function startedRoom(reconnectGraceMs = 60_000): {
   const host = created.player;
   const roomId = created.room.id;
   const guest = service.joinRoom(roomId, "Guest").player;
-  service.setReady(roomId, host.id, true);
   service.setReady(roomId, guest.id, true);
   service.startGame(roomId, host.id);
   return {
@@ -190,7 +189,6 @@ describe("RoomService Phase 2 integration", () => {
     const { service, roomId, hostId, guestId } = context;
     finishGame(context);
     service.returnToLobby(roomId, hostId, service.getSnapshot(roomId).revision);
-    service.setReady(roomId, hostId, true);
     service.setReady(roomId, guestId, true);
     service.startGame(roomId, hostId);
     const game = service.getSnapshot(roomId).game!;

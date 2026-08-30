@@ -17,6 +17,16 @@ const upperFace: Record<(typeof UPPER_CATEGORIES)[number], DieValue> = {
   SIXES: 6,
 };
 
+export const COMBINATION_CATEGORIES = [
+  "FOUR_OF_A_KIND",
+  "FULL_HOUSE",
+  "SMALL_STRAIGHT",
+  "LARGE_STRAIGHT",
+  "YACHT",
+] as const satisfies readonly ScoreCategory[];
+
+export type ScoringCombination = (typeof COMBINATION_CATEGORIES)[number];
+
 export function createEmptyScoreCard(): ScoreCard {
   return Object.fromEntries(SCORE_CATEGORIES.map((category) => [category, null])) as ScoreCard;
 }
@@ -66,6 +76,12 @@ export function calculateScore(
   }
   if (category === "YACHT") return counts.size === 1 ? 50 : 0;
   return 0;
+}
+
+export function matchedCombinations(
+  dice: readonly DieValue[],
+): ScoringCombination[] {
+  return COMBINATION_CATEGORIES.filter((category) => calculateScore(category, dice) > 0);
 }
 
 export function scoreCardTotals(scoreCard: ScoreCard): ScoreCardTotals {

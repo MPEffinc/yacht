@@ -148,12 +148,8 @@ describe("Yacht WebSocket lobby", () => {
       b.waitFor(roomView((room) => (room.players as unknown[]).length === 2)),
     ]);
 
-    a.send({ event: "SET_READY", requestId: "ready-a", ready: true });
     b.send({ event: "SET_READY", requestId: "ready-b", ready: true });
-    await Promise.all([
-      a.waitFor((message) => message.event === "COMMAND_OK" && message.requestId === "ready-a"),
-      b.waitFor((message) => message.event === "COMMAND_OK" && message.requestId === "ready-b"),
-    ]);
+    await b.waitFor((message) => message.event === "COMMAND_OK" && message.requestId === "ready-b");
     const allReady = roomView((room) => room.canStart === true);
     await Promise.all([a.waitFor(allReady), b.waitFor(allReady)]);
 
@@ -167,33 +163,33 @@ describe("Yacht WebSocket lobby", () => {
     expect(aView.room).toMatchObject({
       id: roomId,
       status: "STARTED",
-      revision: 5,
+      revision: 4,
       game: { rollsUsed: 0, currentPlayerId: aSession.playerId },
     });
 
-    b.send({ event: "ROLL_DICE", requestId: "wrong-turn", expectedRevision: 5 });
+    b.send({ event: "ROLL_DICE", requestId: "wrong-turn", expectedRevision: 4 });
     expect(
       await b.waitFor(
         (message) => message.event === "ERROR" && message.requestId === "wrong-turn",
       ),
     ).toMatchObject({ code: "NOT_YOUR_TURN" });
 
-    a.send({ event: "ROLL_DICE", requestId: "stale-roll", expectedRevision: 4 });
+    a.send({ event: "ROLL_DICE", requestId: "stale-roll", expectedRevision: 3 });
     expect(
       await a.waitFor(
         (message) => message.event === "ERROR" && message.requestId === "stale-roll",
       ),
     ).toMatchObject({ code: "STALE_REVISION" });
-    await a.waitFor(roomView((room) => room.revision === 5));
+    await a.waitFor(roomView((room) => room.revision === 4));
 
-    a.send({ event: "ROLL_DICE", requestId: "roll-a-1", expectedRevision: 5 });
+    a.send({ event: "ROLL_DICE", requestId: "roll-a-1", expectedRevision: 4 });
     await a.waitFor(
       (message) => message.event === "COMMAND_OK" && message.requestId === "roll-a-1",
     );
-    const rolledRevision6 = roomView((room) => room.revision === 6);
+    const rolledRevision5 = roomView((room) => room.revision === 5);
     const [aRolled, bRolled] = await Promise.all([
-      a.waitFor(rolledRevision6),
-      b.waitFor(rolledRevision6),
+      a.waitFor(rolledRevision5),
+      b.waitFor(rolledRevision5),
     ]);
     expect(aRolled.room).toEqual(bRolled.room);
     const firstDice = (
@@ -205,23 +201,23 @@ describe("Yacht WebSocket lobby", () => {
     a.send({
       event: "SET_HELD_DICE",
       requestId: "hold-a",
-      expectedRevision: 6,
+      expectedRevision: 5,
       heldIndices: [0, 2],
     });
     await a.waitFor(
       (message) => message.event === "COMMAND_OK" && message.requestId === "hold-a",
     );
-    const heldRevision7 = roomView((room) => room.revision === 7);
-    await Promise.all([a.waitFor(heldRevision7), b.waitFor(heldRevision7)]);
+    const heldRevision6 = roomView((room) => room.revision === 6);
+    await Promise.all([a.waitFor(heldRevision6), b.waitFor(heldRevision6)]);
 
-    a.send({ event: "ROLL_DICE", requestId: "roll-a-2", expectedRevision: 7 });
+    a.send({ event: "ROLL_DICE", requestId: "roll-a-2", expectedRevision: 6 });
     await a.waitFor(
       (message) => message.event === "COMMAND_OK" && message.requestId === "roll-a-2",
     );
-    const rolledRevision8 = roomView((room) => room.revision === 8);
+    const rolledRevision7 = roomView((room) => room.revision === 7);
     const [aRerolled, bRerolled] = await Promise.all([
-      a.waitFor(rolledRevision8),
-      b.waitFor(rolledRevision8),
+      a.waitFor(rolledRevision7),
+      b.waitFor(rolledRevision7),
     ]);
     expect(aRerolled.room).toEqual(bRerolled.room);
     const secondDice = (
@@ -233,20 +229,20 @@ describe("Yacht WebSocket lobby", () => {
     a.send({
       event: "SCORE_CATEGORY",
       requestId: "score-a",
-      expectedRevision: 8,
+      expectedRevision: 7,
       category: "CHOICE",
     });
     await a.waitFor(
       (message) => message.event === "COMMAND_OK" && message.requestId === "score-a",
     );
-    const scoredRevision9 = roomView((room) => room.revision === 9);
+    const scoredRevision8 = roomView((room) => room.revision === 8);
     const [aScored, bScored] = await Promise.all([
-      a.waitFor(scoredRevision9),
-      b.waitFor(scoredRevision9),
+      a.waitFor(scoredRevision8),
+      b.waitFor(scoredRevision8),
     ]);
     expect(aScored.room).toEqual(bScored.room);
     expect(aScored.room).toMatchObject({
-      revision: 9,
+      revision: 8,
       game: {
         currentPlayerId: bSession.playerId,
       },
@@ -298,11 +294,6 @@ describe("Yacht WebSocket lobby", () => {
     }
 
     let revision = 2;
-    await mutate(
-      a,
-      { event: "SET_READY", requestId: "rematch-ready-a", ready: true },
-      ++revision,
-    );
     await mutate(
       b,
       { event: "SET_READY", requestId: "rematch-ready-b", ready: true },
@@ -371,11 +362,6 @@ describe("Yacht WebSocket lobby", () => {
       (latest.players as Array<{ ready: boolean }>).every((player) => !player.ready),
     ).toBe(true);
 
-    await mutate(
-      a,
-      { event: "SET_READY", requestId: "rematch-ready-again-a", ready: true },
-      ++revision,
-    );
     await mutate(
       b,
       { event: "SET_READY", requestId: "rematch-ready-again-b", ready: true },

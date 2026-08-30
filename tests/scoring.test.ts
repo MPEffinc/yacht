@@ -3,6 +3,7 @@ import {
   calculateScore,
   calculateUpperBonus,
   createEmptyScoreCard,
+  matchedCombinations,
   scoreCardTotals,
 } from "../src/game/scoring.js";
 
@@ -56,6 +57,21 @@ describe("RULESET_V1 scoring", () => {
   it("scores Yacht without an additional bonus", () => {
     expect(calculateScore("YACHT", [5, 5, 5, 5, 5])).toBe(50);
     expect(calculateScore("YACHT", [5, 5, 5, 5, 4])).toBe(0);
+  });
+
+  it("derives premium combination feedback in scoring-rule order", () => {
+    expect(matchedCombinations([3, 3, 3, 5, 5])).toEqual(["FULL_HOUSE"]);
+    expect(matchedCombinations([1, 2, 3, 4, 6])).toEqual(["SMALL_STRAIGHT"]);
+    expect(matchedCombinations([1, 2, 3, 4, 5])).toEqual([
+      "SMALL_STRAIGHT",
+      "LARGE_STRAIGHT",
+    ]);
+    expect(matchedCombinations([6, 6, 6, 6, 3])).toEqual(["FOUR_OF_A_KIND"]);
+    expect(matchedCombinations([5, 5, 5, 5, 5])).toEqual([
+      "FOUR_OF_A_KIND",
+      "FULL_HOUSE",
+      "YACHT",
+    ]);
   });
 
   it("derives the 63-point upper bonus boundary", () => {

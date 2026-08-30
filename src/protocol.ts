@@ -157,7 +157,7 @@ const errorMessages: Record<RoomErrorCode, string> = {
   INVALID_SESSION: "세션이 유효하지 않습니다. 다시 입장해 주세요.",
   NOT_HOST: "방장만 실행할 수 있습니다.",
   NOT_ENOUGH_PLAYERS: "게임을 시작하려면 최소 2명이 필요합니다.",
-  PLAYERS_NOT_READY: "모든 플레이어가 접속하고 Ready 상태여야 합니다.",
+  PLAYERS_NOT_READY: "모두 접속하고, 방장을 제외한 참가자가 Ready 상태여야 합니다.",
   GAME_ALREADY_STARTED: "이미 시작된 방에는 새로 참가할 수 없습니다.",
   GAME_NOT_FINISHED: "게임이 끝난 뒤에만 같은 방에서 다시 시작할 수 있습니다.",
   STALE_REVISION: "게임 상태가 변경되었습니다. 최신 상태로 다시 시도해 주세요.",
