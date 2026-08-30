@@ -64,16 +64,17 @@ const combinationLabels: Partial<Record<ScoreCategory, string>> = {
   SMALL_STRAIGHT: "Small Straight",
 };
 
-const lowerCategoryGlyphs: Partial<Record<ScoreCategory, number[]>> = {
-  CHOICE: [0, 4, 7, 10, 14],
-  FOUR_OF_A_KIND: [1, 3, 11, 13],
-  FULL_HOUSE: [0, 2, 4, 11, 13],
-  SMALL_STRAIGHT: [0, 4, 8, 12],
-  LARGE_STRAIGHT: [0, 4, 7, 10, 14],
-  YACHT: [0, 2, 7, 12, 14],
+const lowerCategoryMarks: Partial<Record<ScoreCategory, string>> = {
+  CHOICE: "C",
+  FOUR_OF_A_KIND: "4",
+  FULL_HOUSE: "F",
+  SMALL_STRAIGHT: "S",
+  LARGE_STRAIGHT: "L",
+  YACHT: "Y",
 };
 
-const ROLL_PRESENTATION_MS = 780;
+const ROLL_PRESENTATION_MS = 1_000;
+const COMBINATION_PRESENTATION_MS = 1_800;
 
 interface CombinationAlert {
   primary: ScoreCategory;
@@ -287,7 +288,7 @@ export function GameBoard({
           combinationTimerRef.current = window.setTimeout(() => {
             setCombinationAlert(null);
             combinationTimerRef.current = null;
-          }, 1_250);
+          }, COMBINATION_PRESENTATION_MS);
         };
 
         if (reducedMotion) {
@@ -301,14 +302,14 @@ export function GameBoard({
           setVisualFaces(Object.fromEntries(
             rolled.map((index) => [index, presentationFace(room.revision, index, 0)]),
           ));
-          for (const [phase, delay] of [110, 220, 350, 490].entries()) {
+          for (const [phase, delay] of [140, 290, 450, 620].entries()) {
             rollFaceTimersRef.current.push(window.setTimeout(() => {
               setVisualFaces(Object.fromEntries(
                 rolled.map((index) => [index, presentationFace(room.revision, index, phase + 1)]),
               ));
             }, delay));
           }
-          rollFaceTimersRef.current.push(window.setTimeout(() => setVisualFaces({}), 590));
+          rollFaceTimersRef.current.push(window.setTimeout(() => setVisualFaces({}), 800));
           rollTimerRef.current = window.setTimeout(() => {
             setRollingIndices([]);
             setVisualFaces({});
@@ -329,8 +330,8 @@ export function GameBoard({
       game.currentPlayerId !== null;
     if (isTurnTransition) {
       const message = game.currentPlayerId === selfPlayerId
-        ? "내 차례입니다"
-        : `${room.players.find((player) => player.id === game.currentPlayerId)?.nickname ?? "플레이어"}님의 차례`;
+        ? "YOUR TURN"
+        : `${room.players.find((player) => player.id === game.currentPlayerId)?.nickname ?? "PLAYER"} · TURN`;
       if (turnTimerRef.current !== null) window.clearTimeout(turnTimerRef.current);
       setTurnTransition(message);
       turnTimerRef.current = window.setTimeout(() => {
@@ -527,7 +528,7 @@ export function GameBoard({
               <div className="keep-zone">
                 <div className="tray-label">
                   <strong>KEEP</strong>
-                  <span>굴리지 않을 주사위</span>
+                  <span>DICE NOT TO ROLL</span>
                 </div>
                 <div className="keep-slots">
                   {game.dice.map((die, index) => (
@@ -584,7 +585,7 @@ export function GameBoard({
                     ),
                   )}
                   {allKept && (
-                    <p className="all-kept-message">모든 주사위를 KEEP했습니다.</p>
+                    <p className="all-kept-message">ALL DICE KEPT</p>
                   )}
                 </div>
               </div>
@@ -598,7 +599,7 @@ export function GameBoard({
                   {game.phase === "FINISHED"
                     ? "GAME COMPLETE"
                     : busy
-                      ? "처리 중..."
+                      ? "PLEASE WAIT..."
                       : game.rollsUsed === 0
                         ? "ROLL DICE"
                         : "ROLL AGAIN"}
@@ -609,14 +610,14 @@ export function GameBoard({
                 </div>
                 <p className={allKept ? "keep-help all-kept-help" : "keep-help"}>
                   {game.phase === "FINISHED"
-                    ? "최종 점수표를 확인하세요"
+                    ? "CHECK THE FINAL SCORE"
                     : allKept && isMyTurn
-                      ? "점수를 기록하거나 KEEP을 해제하세요"
+                      ? "SCORE OR RELEASE A DIE"
                       : game.rollsUsed > 0 && isMyTurn
-                        ? "주사위를 눌러 KEEP"
+                        ? "PRESS A DIE TO KEEP"
                         : isMyTurn
-                          ? "주사위를 굴려 시작하세요"
-                          : "상대의 플레이를 기다리는 중"}
+                          ? "ROLL TO BEGIN"
+                          : "WAITING FOR OPPONENT"}
                 </p>
               </div>
             </div>
@@ -656,7 +657,7 @@ function DieButton({
   scatter?: ScatterPosition;
   visualValue: DieValue | null;
 }): ReactElement {
-  const action = kept ? "KEEP 해제" : "KEEP 설정";
+  const action = kept ? "release from KEEP" : "set to KEEP";
   const scatterStyle = scatter
     ? {
         "--scatter-x": `${scatter.x * 100}%`,
@@ -674,7 +675,7 @@ function DieButton({
     : undefined;
   return (
     <button
-      aria-label={`${index + 1}번 주사위, ${die.value ?? "아직 굴리지 않음"}, ${action}`}
+      aria-label={`Die ${index + 1}, ${die.value ?? "not rolled"}, ${action}`}
       className={`physical-die${kept ? " kept" : ""}${rolling ? " rolling" : ""}`}
       data-die-index={index}
       data-die-value={die.value ?? "empty"}
@@ -707,21 +708,14 @@ function PipFace({ value, compact = false }: { value: DieValue | null; compact?:
 
 function CategoryLabel({ category }: { category: ScoreCategory }): ReactElement {
   const face = upperFaces[category];
-  const glyph = lowerCategoryGlyphs[category];
+  const mark = lowerCategoryMarks[category];
   return (
     <span className="category-label">
       <span aria-hidden="true" className={face ? "category-symbol upper" : "category-symbol lower"}>
         {face ? (
           <PipFace compact value={face} />
         ) : (
-          <span className="category-mark-grid">
-            {glyph?.map((position) => (
-              <i
-                key={position}
-                style={{ gridColumn: position % 5 + 1, gridRow: Math.floor(position / 5) + 1 }}
-              />
-            ))}
-          </span>
+          mark
         )}
       </span>
       {categoryLabels[category]}
@@ -781,34 +775,34 @@ function TableControls({
           <div className="shelf-status">
             <span>NETWORK</span>
             <strong className={connected ? "network-online" : "network-offline"}>
-              {connected ? "ONLINE" : "연결 복구 중"} <i aria-hidden="true" />
+              {connected ? "ONLINE" : "RECONNECTING"} <i aria-hidden="true" />
             </strong>
           </div>
           <button className="shelf-action" onClick={onCopyInvite} type="button">
-            {copyFeedback === "COPIED" ? "초대 링크 복사 완료" : "초대 링크 복사"}
+            {copyFeedback === "COPIED" ? "INVITE LINK COPIED" : "COPY INVITE LINK"}
           </button>
           {copyFeedback === "ERROR" && (
-            <p className="shelf-feedback" role="status">/yacht/r/{roomId} 링크를 직접 복사해 주세요.</p>
+            <p className="shelf-feedback" role="status">COPY /yacht/r/{roomId} MANUALLY.</p>
           )}
 
           {leaveConfirmOpen ? (
-            <div className="shelf-leave-confirm" role="group" aria-label="게임 나가기 확인">
-              <strong>테이블을 나갈까요?</strong>
+            <div className="shelf-leave-confirm" role="group" aria-label="Confirm leaving the game">
+              <strong>LEAVE THIS TABLE?</strong>
               <p>
                 {gamePhase === "PLAYING"
-                  ? "진행 중 나가면 게임이 종료되고 모두 로비로 돌아갑니다."
-                  : "방을 나가면 남은 플레이어는 로비로 돌아갑니다."}
+                  ? "LEAVING ENDS THE GAME AND RETURNS EVERYONE TO THE LOBBY."
+                  : "THE REMAINING PLAYERS WILL RETURN TO THE LOBBY."}
               </p>
               <div>
-                <button autoFocus onClick={onCancelLeave} type="button">취소</button>
+                <button autoFocus onClick={onCancelLeave} type="button">CANCEL</button>
                 <button className="confirm-leave" disabled={busy} onClick={onConfirmLeave} type="button">
-                  나가기
+                  LEAVE
                 </button>
               </div>
             </div>
           ) : (
             <button className="shelf-action shelf-leave" disabled={busy} onClick={onOpenLeave} type="button">
-              게임에서 나가기
+              LEAVE GAME
             </button>
           )}
         </div>
@@ -888,7 +882,7 @@ function ScoreSheet({
                 <strong className="score-committed">{score}</strong>
               ) : preview !== undefined && playerId === game.currentPlayerId ? (
                 <button
-                  aria-label={`${categoryLabels[category]}에 ${preview}점 기록`}
+                  aria-label={`Record ${preview} points in ${categoryLabels[category]}`}
                   aria-pressed={selected}
                   className={selected ? "score-preview selected" : "score-preview"}
                   disabled={!selectable}
@@ -1033,13 +1027,13 @@ function ScoreConfirmationDialog({
         </div>
         <p id="score-dialog-description">
           {zeroScore
-            ? "이 칸은 이후 다시 사용할 수 없습니다."
-            : "이 점수를 기록하시겠습니까?"}
+            ? "THIS CATEGORY CANNOT BE USED AGAIN."
+            : "RECORD THIS SCORE?"}
         </p>
         <div className="score-dialog-actions">
-          <button autoFocus onClick={onCancel} type="button">취소</button>
+          <button autoFocus onClick={onCancel} type="button">CANCEL</button>
           <button className={zeroScore ? "record-score zero" : "record-score"} onClick={onSubmit} type="button">
-            {pendingScore.score}점 기록
+            RECORD {pendingScore.score}
           </button>
         </div>
       </div>
@@ -1065,7 +1059,7 @@ function ResultPanel({
   return (
     <aside className="result-panel" aria-label="Final ranking and rematch">
       <p className="result-kicker">{winners.length > 1 ? "TIE WINNERS" : "WINNER"}</p>
-      <h2>{winnerText}{winners.length > 1 ? " 공동 우승" : " 우승"}</h2>
+      <h2>{winnerText}{winners.length > 1 ? " · TIED WINNERS" : " · WINNER"}</h2>
       <p className="result-final-score">Final score {winners[0]?.total ?? 0}</p>
       <ol>
         {standings.map((entry) => {
@@ -1073,7 +1067,7 @@ function ResultPanel({
           const winner = winnerPlayerIds.includes(entry.playerId);
           return (
             <li className={winner ? "winner" : ""} key={entry.playerId}>
-              <span>{rank}위</span>
+              <span>#{rank}</span>
               <strong>{winner && "★ "}{entry.nickname}</strong>
               <b>{entry.total}</b>
             </li>
@@ -1090,13 +1084,13 @@ function ResultPanel({
               onClick={onReturnToLobby}
               type="button"
             >
-              SAME TABLE · 다시 하기
+              REMATCH · SAME TABLE
             </button>
-            <p>같은 테이블의 로비로 돌아갑니다. 모두 Ready하면 다시 시작할 수 있습니다.</p>
+            <p>RETURN TO THIS TABLE'S LOBBY. START AGAIN WHEN EVERYONE IS READY.</p>
           </>
         ) : (
           <p className="rematch-waiting">
-            방장이 재경기를 준비하는 중… 같은 테이블에서 기다려 주세요.
+            THE HOST IS PREPARING A REMATCH. PLEASE WAIT AT THIS TABLE.
           </p>
         )}
       </div>
