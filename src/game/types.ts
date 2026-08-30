@@ -71,6 +71,7 @@ export type GameErrorCode =
   | "NOT_YOUR_TURN"
   | "MUST_ROLL_FIRST"
   | "NO_ROLLS_LEFT"
+  | "NO_DICE_TO_ROLL"
   | "CATEGORY_ALREADY_USED"
   | "INVALID_HOLD";
 

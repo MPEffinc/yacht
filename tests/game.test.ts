@@ -53,6 +53,15 @@ describe("Yacht game state machine", () => {
     expectGameError(() => setGameHeldDice(game, "alice", [1]), "INVALID_HOLD");
   });
 
+  it("rejects a reroll when every die is held without changing game state", () => {
+    const game = initializeYachtGame(["alice", "bob"]);
+    rollGameDice(game, "alice", sequenceRoller([1, 2, 3, 4, 5]));
+    setGameHeldDice(game, "alice", [0, 1, 2, 3, 4]);
+    const before = structuredClone(game);
+    expectGameError(() => rollGameDice(game, "alice", () => 6), "NO_DICE_TO_ROLL");
+    expect(game).toEqual(before);
+  });
+
   it("rejects actions before roll and actions from another player", () => {
     const game = initializeYachtGame(["alice", "bob"]);
     expectGameError(() => scoreGameCategory(game, "alice", "CHOICE"), "MUST_ROLL_FIRST");

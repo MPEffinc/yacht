@@ -98,6 +98,13 @@ export const clientMessageSchema = z.discriminatedUnion("event", [
       category: z.enum(SCORE_CATEGORIES),
     })
     .strict(),
+  z
+    .object({
+      event: z.literal("RETURN_TO_LOBBY"),
+      requestId: requestIdSchema,
+      expectedRevision: expectedRevisionSchema,
+    })
+    .strict(),
 ]);
 
 export type ClientMessage = z.infer<typeof clientMessageSchema>;
@@ -137,6 +144,7 @@ export type RoomErrorCode =
   | "NOT_ENOUGH_PLAYERS"
   | "PLAYERS_NOT_READY"
   | "GAME_ALREADY_STARTED"
+  | "GAME_NOT_FINISHED"
   | "STALE_REVISION"
   | GameErrorCode;
 
@@ -151,12 +159,14 @@ const errorMessages: Record<RoomErrorCode, string> = {
   NOT_ENOUGH_PLAYERS: "게임을 시작하려면 최소 2명이 필요합니다.",
   PLAYERS_NOT_READY: "모든 플레이어가 접속하고 Ready 상태여야 합니다.",
   GAME_ALREADY_STARTED: "이미 시작된 방에는 새로 참가할 수 없습니다.",
+  GAME_NOT_FINISHED: "게임이 끝난 뒤에만 같은 방에서 다시 시작할 수 있습니다.",
   STALE_REVISION: "게임 상태가 변경되었습니다. 최신 상태로 다시 시도해 주세요.",
   GAME_NOT_STARTED: "아직 게임이 시작되지 않았습니다.",
   GAME_FINISHED: "이미 종료된 게임입니다.",
   NOT_YOUR_TURN: "현재 플레이어의 차례가 아닙니다.",
   MUST_ROLL_FIRST: "먼저 주사위를 굴려 주세요.",
   NO_ROLLS_LEFT: "이번 턴의 주사위 굴리기를 모두 사용했습니다.",
+  NO_DICE_TO_ROLL: "다시 굴릴 주사위가 없습니다. KEEP을 해제하거나 점수를 선택해 주세요.",
   CATEGORY_ALREADY_USED: "이미 기록한 점수 항목입니다.",
   INVALID_HOLD: "Hold할 주사위 선택이 올바르지 않습니다.",
 };
@@ -181,7 +191,8 @@ export type ServerMessage =
         | "START_GAME"
         | "ROLL_DICE"
         | "SET_HELD_DICE"
-        | "SCORE_CATEGORY";
+        | "SCORE_CATEGORY"
+        | "RETURN_TO_LOBBY";
     }
   | { event: "LEFT"; requestId: string; roomId: string }
   | { event: "GAME_ABORTED"; message: string }

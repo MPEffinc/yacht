@@ -49,6 +49,9 @@ export function rollGameDice(
   requirePlayingTurn(game, playerId);
   if (game.rollsUsed >= 3) throw new YachtGameError("NO_ROLLS_LEFT");
   const firstRoll = game.rollsUsed === 0;
+  if (!firstRoll && game.dice.every((die) => die.held)) {
+    throw new YachtGameError("NO_DICE_TO_ROLL");
+  }
   for (const die of game.dice) {
     if (firstRoll || !die.held) die.value = dieRoller();
   }

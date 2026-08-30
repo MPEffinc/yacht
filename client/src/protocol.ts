@@ -87,7 +87,8 @@ export type ServerMessage =
         | "START_GAME"
         | "ROLL_DICE"
         | "SET_HELD_DICE"
-        | "SCORE_CATEGORY";
+        | "SCORE_CATEGORY"
+        | "RETURN_TO_LOBBY";
     }
   | { event: "LEFT"; requestId: string; roomId: string }
   | { event: "GAME_ABORTED"; message: string }

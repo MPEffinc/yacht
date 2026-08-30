@@ -343,23 +343,23 @@ export function createYachtApplication(
         case "SET_READY": {
           const binding = requireBinding(context);
           roomService.setReady(binding.roomId, binding.playerId, message.ready);
+          broadcastRoom(binding.roomId);
           sendMessage(socket, {
             event: "COMMAND_OK",
             requestId: message.requestId,
             command: message.event,
           });
-          broadcastRoom(binding.roomId);
           break;
         }
         case "START_GAME": {
           const binding = requireBinding(context);
           roomService.startGame(binding.roomId, binding.playerId);
+          broadcastRoom(binding.roomId);
           sendMessage(socket, {
             event: "COMMAND_OK",
             requestId: message.requestId,
             command: message.event,
           });
-          broadcastRoom(binding.roomId);
           break;
         }
         case "ROLL_DICE": {
@@ -369,12 +369,12 @@ export function createYachtApplication(
             binding.playerId,
             message.expectedRevision,
           );
+          broadcastRoom(binding.roomId);
           sendMessage(socket, {
             event: "COMMAND_OK",
             requestId: message.requestId,
             command: message.event,
           });
-          broadcastRoom(binding.roomId);
           break;
         }
         case "SET_HELD_DICE": {
@@ -385,12 +385,12 @@ export function createYachtApplication(
             message.expectedRevision,
             message.heldIndices,
           );
+          broadcastRoom(binding.roomId);
           sendMessage(socket, {
             event: "COMMAND_OK",
             requestId: message.requestId,
             command: message.event,
           });
-          broadcastRoom(binding.roomId);
           break;
         }
         case "SCORE_CATEGORY": {
@@ -401,12 +401,27 @@ export function createYachtApplication(
             message.expectedRevision,
             message.category,
           );
+          broadcastRoom(binding.roomId);
           sendMessage(socket, {
             event: "COMMAND_OK",
             requestId: message.requestId,
             command: message.event,
           });
+          break;
+        }
+        case "RETURN_TO_LOBBY": {
+          const binding = requireBinding(context);
+          roomService.returnToLobby(
+            binding.roomId,
+            binding.playerId,
+            message.expectedRevision,
+          );
           broadcastRoom(binding.roomId);
+          sendMessage(socket, {
+            event: "COMMAND_OK",
+            requestId: message.requestId,
+            command: message.event,
+          });
           break;
         }
       }

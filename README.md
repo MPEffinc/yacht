@@ -1,6 +1,6 @@
 # Yacht Dice Online
 
-Yacht Dice Online의 Phase 0~2 구현입니다. `/yacht/` 하위 경로에서 2~8명이 로비를 만들고 실제 Yacht Dice `RULESET_V1` 게임을 끝까지 플레이할 수 있습니다. 주사위, 점수, 턴, 승자는 모두 서버가 결정합니다.
+Yacht Dice Online의 Phase 0~3 구현입니다. `/yacht/` 하위 경로에서 2~8명이 로비를 만들고 실제 Yacht Dice `RULESET_V1` 게임을 끝까지 반복 플레이할 수 있습니다. 주사위, 점수, 턴, 승자는 모두 서버가 결정합니다.
 
 ## Architecture
 
@@ -130,7 +130,13 @@ Production dice는 Node `crypto.randomInt(1, 7)`을 사용하며 테스트에서
 
 ## Disconnect policy
 
-일시 disconnect에서는 기존 60초 grace 동안 dice, Hold, Roll 횟수, score card와 현재 턴을 그대로 보존하며 자동으로 턴을 넘기지 않습니다. 게임 중 명시적 퇴장 또는 grace 만료가 발생하면 게임을 abort하고 남은 방을 Ready가 초기화된 `LOBBY`로 되돌립니다. Host 이전은 기존 join order 규칙을 유지합니다.
+일시 disconnect에서는 기존 60초 grace 동안 dice, KEEP, Roll 횟수, score card와 현재 턴을 그대로 보존하며 자동으로 턴을 넘기지 않습니다. 게임 중 명시적 퇴장 또는 grace 만료가 발생하면 게임을 abort하고 남은 방을 Ready가 초기화된 `LOBBY`로 되돌립니다. 정상적으로 `FINISHED`된 게임에서 나가는 경우도 roster/scorecard 불일치를 피하기 위해 Lobby로 돌아가지만 `GAME_ABORTED` notice는 보내지 않습니다. Host 이전은 기존 join order 규칙을 유지합니다.
+
+## Gameplay polish and rematch
+
+Roll 결과는 항상 server-authoritative snapshot으로 먼저 확정되며, 브라우저는 실제로 다시 굴린 주사위에만 짧은 presentation animation을 적용합니다. 모든 주사위를 KEEP한 재굴림은 서버와 클라이언트가 함께 차단합니다. 점수와 진행 중 퇴장은 자체 confirmation dialog로 확인하며, reconnect 후에는 보존된 authoritative state를 그대로 복구합니다.
+
+경기 종료 후 Host가 `RETURN_TO_LOBBY`를 보내면 같은 room/player/session을 유지한 채 모든 Ready만 초기화합니다. 각 플레이어가 다시 Ready하고 Host가 `START_GAME`을 실행해야 새 점수표와 주사위 상태로 재경기가 시작됩니다.
 
 ## Docker
 
@@ -175,4 +181,6 @@ Phase 1은 방 생성/참가/나가기, 세션 재접속, Host 이전, Ready/시
 
 Phase 2는 crypto Roll, Hold, 12개 category scoring, +35 upper bonus, score preview/board, turn/round 진행, 완료/공동 승자, revision 보호와 게임 중 이탈 abort를 포함합니다.
 
-현재 범위에는 AI, spectator, chat, account, database, match history, leaderboard, rematch, custom rules, sound 및 3D dice가 포함되지 않습니다.
+Phase 3는 authoritative Roll animation presentation, 점수/퇴장 확인 dialog, 턴 전환 안내, all-KEEP 보호, reconnect/stale revision UX, 정상 종료 lifecycle 보정과 같은 방 Lobby를 재사용하는 동의 기반 rematch를 포함합니다.
+
+현재 범위에는 AI, spectator, chat, account, database, match history, leaderboard, custom rules, sound 및 3D dice가 포함되지 않습니다.

@@ -248,6 +248,24 @@ export class RoomService {
     return room;
   }
 
+  returnToLobby(
+    roomId: string,
+    playerId: string,
+    expectedRevision: number,
+  ): RoomRecord {
+    const room = this.requireRoom(roomId);
+    this.requirePlayer(room, playerId);
+    if (room.revision !== expectedRevision) throw new RoomError("STALE_REVISION");
+    if (room.hostPlayerId !== playerId) throw new RoomError("NOT_HOST");
+    if (room.status !== "STARTED" || !room.game) throw new RoomError("GAME_NOT_STARTED");
+    if (room.game.phase !== "FINISHED") throw new RoomError("GAME_NOT_FINISHED");
+    room.status = "LOBBY";
+    room.game = null;
+    for (const player of room.players.values()) player.ready = false;
+    this.bump(room);
+    return room;
+  }
+
   markDisconnected(
     roomId: string,
     playerId: string,
@@ -347,7 +365,8 @@ export class RoomService {
 
   private removePlayer(room: RoomRecord, playerId: string): RemovalResult {
     const player = this.requirePlayer(room, playerId);
-    const wasStarted = room.status === "STARTED";
+    const wasActivelyPlaying = room.status === "STARTED" && room.game?.phase === "PLAYING";
+    const hadGame = room.status === "STARTED" && room.game !== null;
     room.players.delete(playerId);
     if (room.hostPlayerId === playerId) {
       room.hostPlayerId = this.selectNextHost(room)?.id ?? null;
@@ -355,14 +374,14 @@ export class RoomService {
     this.bump(room);
     if (room.players.size === 0) {
       this.rooms.delete(room.id);
-      return { room: null, removedPlayer: player, gameAborted: wasStarted };
+      return { room: null, removedPlayer: player, gameAborted: wasActivelyPlaying };
     }
-    if (wasStarted) {
+    if (hadGame) {
       room.status = "LOBBY";
       room.game = null;
       for (const remainingPlayer of room.players.values()) remainingPlayer.ready = false;
     }
-    return { room, removedPlayer: player, gameAborted: wasStarted };
+    return { room, removedPlayer: player, gameAborted: wasActivelyPlaying };
   }
 
   private selectNextHost(room: RoomRecord): PlayerRecord | undefined {

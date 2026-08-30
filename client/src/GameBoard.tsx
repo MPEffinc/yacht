@@ -1,4 +1,12 @@
-import type { ReactElement } from "react";
+import {
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type ReactElement,
+  type ReactNode,
+} from "react";
 import {
   LOWER_CATEGORIES,
   UPPER_CATEGORIES,
@@ -44,30 +52,131 @@ interface GameBoardProps {
   room: PublicRoomSnapshot;
   selfPlayerId: string | null;
   busy: boolean;
+  connected: boolean;
   onRoll: () => void;
   onSetHeld: (indices: number[]) => void;
   onScore: (category: ScoreCategory) => void;
   onLeave: () => void;
+  onReturnToLobby: () => void;
+}
+
+interface PendingScore {
+  category: ScoreCategory;
+  score: number;
+  revision: number;
 }
 
 export function GameBoard({
   room,
   selfPlayerId,
   busy,
+  connected,
   onRoll,
   onSetHeld,
   onScore,
   onLeave,
+  onReturnToLobby,
 }: GameBoardProps): ReactElement {
   const game = room.game!;
+  const [pendingScore, setPendingScore] = useState<PendingScore | null>(null);
+  const [leaveDialogOpen, setLeaveDialogOpen] = useState(false);
+  const [rollingIndices, setRollingIndices] = useState<number[]>([]);
+  const [presentationLocked, setPresentationLocked] = useState(false);
+  const [turnTransition, setTurnTransition] = useState<string | null>(null);
+  const [reducedMotion, setReducedMotion] = useState(
+    () => window.matchMedia("(prefers-reduced-motion: reduce)").matches,
+  );
+  const previousGameRef = useRef(game);
+  const previousRevisionRef = useRef(room.revision);
+  const rollTimerRef = useRef<number | null>(null);
+  const turnTimerRef = useRef<number | null>(null);
   const playersById = new Map(room.players.map((player) => [player.id, player]));
   const currentPlayer = game.currentPlayerId
     ? playersById.get(game.currentPlayerId) ?? null
     : null;
   const isMyTurn = game.phase === "PLAYING" && game.currentPlayerId === selfPlayerId;
   const currentDisconnected = currentPlayer?.connectionState === "DISCONNECTED_GRACE";
-  const canRoll = isMyTurn && game.rollsRemaining > 0 && !busy;
-  const canKeep = isMyTurn && game.rollsUsed > 0 && game.rollsRemaining > 0 && !busy;
+  const allKept = game.rollsUsed > 0 && game.dice.every((die) => die.held);
+  const inputLocked = busy || presentationLocked || !connected || currentDisconnected;
+  const canRoll = isMyTurn && game.rollsRemaining > 0 && !allKept && !inputLocked;
+  const canKeep = isMyTurn && game.rollsUsed > 0 && game.rollsRemaining > 0 && !inputLocked;
+
+  useEffect(() => {
+    const mediaQuery = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const onChange = (): void => setReducedMotion(mediaQuery.matches);
+    mediaQuery.addEventListener("change", onChange);
+    return () => mediaQuery.removeEventListener("change", onChange);
+  }, []);
+
+  useLayoutEffect(() => {
+    const previous = previousGameRef.current;
+    const previousRevision = previousRevisionRef.current;
+    previousGameRef.current = game;
+    previousRevisionRef.current = room.revision;
+    const isSequentialSnapshot = room.revision === previousRevision + 1;
+
+    const isRollTransition =
+      isSequentialSnapshot &&
+      previous.phase === "PLAYING" &&
+      game.phase === "PLAYING" &&
+      previous.currentPlayerId === game.currentPlayerId &&
+      game.rollsUsed === previous.rollsUsed + 1;
+    if (isRollTransition && !reducedMotion) {
+      const rolled = previous.rollsUsed === 0
+        ? [0, 1, 2, 3, 4]
+        : previous.dice
+            .map((die, index) => ({ held: die.held, index }))
+            .filter((die) => !die.held)
+            .map((die) => die.index);
+      if (rolled.length > 0) {
+        if (rollTimerRef.current !== null) window.clearTimeout(rollTimerRef.current);
+        setRollingIndices(rolled);
+        setPresentationLocked(true);
+        rollTimerRef.current = window.setTimeout(() => {
+          setRollingIndices([]);
+          setPresentationLocked(false);
+          rollTimerRef.current = null;
+        }, 560);
+      }
+    }
+
+    const isTurnTransition =
+      isSequentialSnapshot &&
+      previous.phase === "PLAYING" &&
+      game.phase === "PLAYING" &&
+      previous.completedTurns + 1 === game.completedTurns &&
+      previous.currentPlayerId !== game.currentPlayerId &&
+      game.currentPlayerId !== null;
+    if (isTurnTransition) {
+      const message = game.currentPlayerId === selfPlayerId
+        ? "내 차례입니다"
+        : `${room.players.find((player) => player.id === game.currentPlayerId)?.nickname ?? "플레이어"}님의 차례`;
+      if (turnTimerRef.current !== null) window.clearTimeout(turnTimerRef.current);
+      setTurnTransition(message);
+      turnTimerRef.current = window.setTimeout(() => {
+        setTurnTransition(null);
+        turnTimerRef.current = null;
+      }, reducedMotion ? 1 : 820);
+    }
+  }, [game, reducedMotion, room.players, room.revision, selfPlayerId]);
+
+  useEffect(() => () => {
+    if (rollTimerRef.current !== null) window.clearTimeout(rollTimerRef.current);
+    if (turnTimerRef.current !== null) window.clearTimeout(turnTimerRef.current);
+  }, []);
+
+  useEffect(() => {
+    if (!pendingScore) return;
+    const selfCard = selfPlayerId ? game.scoreCards[selfPlayerId] : null;
+    const stillValid =
+      connected &&
+      game.phase === "PLAYING" &&
+      isMyTurn &&
+      room.revision === pendingScore.revision &&
+      selfCard?.scores[pendingScore.category] === null &&
+      game.availableScores?.[pendingScore.category] === pendingScore.score;
+    if (!stillValid) setPendingScore(null);
+  }, [connected, game, isMyTurn, pendingScore, room.revision, selfPlayerId]);
 
   function toggleKept(index: number): void {
     if (!canKeep) return;
@@ -78,15 +187,16 @@ export function GameBoard({
     onSetHeld(heldIndices);
   }
 
-  function confirmScore(category: ScoreCategory, score: number): void {
-    const label = categoryLabels[category];
-    const warning =
-      score === 0
-        ? "\n0점으로 기록되며 이 칸은 다시 사용할 수 없습니다."
-        : "";
-    if (window.confirm(`${label}에 ${score}점을 기록하시겠습니까?${warning}`)) {
-      onScore(category);
-    }
+  function openScoreDialog(category: ScoreCategory, score: number): void {
+    if (inputLocked) return;
+    setPendingScore({ category, score, revision: room.revision });
+  }
+
+  function submitScore(): void {
+    if (!pendingScore) return;
+    const category = pendingScore.category;
+    setPendingScore(null);
+    onScore(category);
   }
 
   const standings = game.playerOrder
@@ -119,10 +229,15 @@ export function GameBoard({
       </header>
 
       <div className="tabletop-board">
+        {turnTransition && (
+          <div className="turn-transition" role="status">
+            {turnTransition}
+          </div>
+        )}
         <ScoreSheet
-          busy={busy}
+          busy={inputLocked}
           isMyTurn={isMyTurn}
-          onConfirmScore={confirmScore}
+          onConfirmScore={openScoreDialog}
           playersById={playersById}
           room={room}
           selfPlayerId={selfPlayerId}
@@ -130,7 +245,13 @@ export function GameBoard({
 
         <section className="dice-station" aria-label="Dice tray">
           {game.phase === "FINISHED" ? (
-            <ResultPanel standings={standings} winnerPlayerIds={game.winnerPlayerIds} />
+            <ResultPanel
+              busy={busy}
+              isHost={room.hostPlayerId === selfPlayerId}
+              onReturnToLobby={onReturnToLobby}
+              standings={standings}
+              winnerPlayerIds={game.winnerPlayerIds}
+            />
           ) : (
             <div className="turn-card">
               <span>TURN</span>
@@ -155,6 +276,7 @@ export function GameBoard({
                         index={index}
                         kept
                         onClick={() => toggleKept(index)}
+                        rolling={false}
                       />
                     ) : (
                       <span aria-hidden="true" className="slot-number">{index + 1}</span>
@@ -176,10 +298,11 @@ export function GameBoard({
                       kept={false}
                       key={index}
                       onClick={() => toggleKept(index)}
+                      rolling={rollingIndices.includes(index)}
                     />
                   ),
                 )}
-                {game.dice.every((die) => die.held) && (
+                {allKept && (
                   <p className="all-kept-message">모든 주사위를 KEEP했습니다.</p>
                 )}
               </div>
@@ -195,17 +318,64 @@ export function GameBoard({
             {busy ? "처리 중..." : game.rollsUsed === 0 ? "Roll Dice" : "Roll Again"}
           </button>
           <p className="rolls-left">{game.rollsRemaining} rolls left</p>
-          {game.rollsUsed > 0 && game.rollsRemaining > 0 && isMyTurn && (
+          {allKept && isMyTurn ? (
+            <p className="keep-help all-kept-help">
+              점수를 선택하거나 KEEP을 해제해 주세요.
+            </p>
+          ) : game.rollsUsed > 0 && game.rollsRemaining > 0 && isMyTurn && (
             <p className="keep-help">주사위를 누르면 KEEP 영역으로 이동합니다.</p>
           )}
         </section>
       </div>
 
       <div className="game-footer-actions">
-        <button className="button danger" disabled={busy} onClick={onLeave} type="button">
+        <button
+          className="button danger"
+          disabled={busy}
+          onClick={() => setLeaveDialogOpen(true)}
+          type="button"
+        >
           방 나가기
         </button>
       </div>
+
+      {pendingScore && (
+        <ConfirmationDialog
+          confirmLabel={`${pendingScore.score}점 기록`}
+          danger={pendingScore.score === 0}
+          onCancel={() => setPendingScore(null)}
+          onConfirm={submitScore}
+          title={categoryLabels[pendingScore.category]}
+        >
+          {pendingScore.score === 0 ? (
+            <>
+              <strong>0점으로 기록됩니다.</strong>
+              <p>이 점수 칸은 이후 다시 사용할 수 없습니다.</p>
+            </>
+          ) : (
+            <p><strong>{pendingScore.score}점</strong>을 기록하시겠습니까?</p>
+          )}
+        </ConfirmationDialog>
+      )}
+
+      {leaveDialogOpen && (
+        <ConfirmationDialog
+          confirmLabel="게임에서 나가기"
+          danger
+          onCancel={() => setLeaveDialogOpen(false)}
+          onConfirm={() => {
+            setLeaveDialogOpen(false);
+            onLeave();
+          }}
+          title="게임에서 나가시겠습니까?"
+        >
+          {game.phase === "PLAYING" ? (
+            <p>진행 중 나가면 현재 게임은 종료되고 남은 플레이어는 로비로 돌아갑니다.</p>
+          ) : (
+            <p>방을 나가면 남은 플레이어는 로비로 돌아갑니다.</p>
+          )}
+        </ConfirmationDialog>
+      )}
     </section>
   );
 }
@@ -216,18 +386,20 @@ function DieButton({
   kept,
   canInteract,
   onClick,
+  rolling,
 }: {
   die: { value: DieValue | null; held: boolean };
   index: number;
   kept: boolean;
   canInteract: boolean;
   onClick: () => void;
+  rolling: boolean;
 }): ReactElement {
   const action = kept ? "KEEP 해제" : "KEEP 설정";
   return (
     <button
       aria-label={`${index + 1}번 주사위, ${die.value ?? "아직 굴리지 않음"}, ${action}`}
-      className={kept ? "physical-die kept" : "physical-die"}
+      className={`physical-die${kept ? " kept" : ""}${rolling ? " rolling" : ""}`}
       data-die-index={index}
       data-die-value={die.value ?? "empty"}
       disabled={!canInteract}
@@ -385,14 +557,23 @@ function ScoreSheet({
 function ResultPanel({
   standings,
   winnerPlayerIds,
+  isHost,
+  busy,
+  onReturnToLobby,
 }: {
   standings: Array<{ playerId: string; nickname: string; total: number }>;
   winnerPlayerIds: string[];
+  isHost: boolean;
+  busy: boolean;
+  onReturnToLobby: () => void;
 }): ReactElement {
+  const winners = standings.filter((entry) => winnerPlayerIds.includes(entry.playerId));
+  const winnerText = winners.map((entry) => entry.nickname).join(" · ");
   return (
     <div className="result-panel">
-      <p className="eyebrow">FINAL RESULT</p>
-      <h2>게임 종료</h2>
+      <p className="result-kicker">{winners.length > 1 ? "TIE WINNERS" : "WINNER"}</p>
+      <h2>{winnerText}{winners.length > 1 ? " 공동 우승" : " 우승"}</h2>
+      <p className="result-final-score">Final score {winners[0]?.total ?? 0}</p>
       <ol>
         {standings.map((entry) => {
           const rank = standings.findIndex((candidate) => candidate.total === entry.total) + 1;
@@ -406,6 +587,104 @@ function ResultPanel({
           );
         })}
       </ol>
+      <div className="rematch-actions">
+        {isHost ? (
+          <>
+            <button
+              className="rematch-button"
+              data-action="return-to-lobby"
+              disabled={busy}
+              onClick={onReturnToLobby}
+              type="button"
+            >
+              같은 방에서 다시 하기
+            </button>
+            <p>같은 방을 유지하고 로비로 돌아갑니다. 모두 Ready하면 다시 시작할 수 있습니다.</p>
+          </>
+        ) : (
+          <p className="rematch-waiting">
+            방장이 재경기를 준비하면 같은 방에서 다시 플레이할 수 있습니다.
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function ConfirmationDialog({
+  title,
+  children,
+  confirmLabel,
+  danger = false,
+  onCancel,
+  onConfirm,
+}: {
+  title: string;
+  children: ReactNode;
+  confirmLabel: string;
+  danger?: boolean;
+  onCancel: () => void;
+  onConfirm: () => void;
+}): ReactElement {
+  const titleId = useId();
+  const dialogRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent): void => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onCancel();
+        return;
+      }
+      if (event.key !== "Tab") return;
+      const focusable = [...(dialogRef.current?.querySelectorAll<HTMLElement>(
+        "button:not(:disabled), [href], input:not(:disabled), select:not(:disabled), textarea:not(:disabled), [tabindex]:not([tabindex='-1'])",
+      ) ?? [])];
+      const first = focusable[0];
+      const last = focusable.at(-1);
+      if (!first || !last) return;
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onCancel]);
+
+  return (
+    <div
+      className="dialog-backdrop"
+      onMouseDown={(event) => {
+        if (event.target === event.currentTarget) onCancel();
+      }}
+    >
+      <div
+        aria-labelledby={titleId}
+        aria-modal="true"
+        className="confirmation-dialog"
+        ref={dialogRef}
+        role="dialog"
+      >
+        <p className="dialog-kicker">CONFIRM</p>
+        <h2 id={titleId}>{title}</h2>
+        <div className="dialog-copy">{children}</div>
+        <div className="dialog-actions">
+          <button autoFocus className="button ghost" onClick={onCancel} type="button">
+            취소
+          </button>
+          <button
+            className={danger ? "button dialog-danger" : "button accent"}
+            onClick={onConfirm}
+            type="button"
+          >
+            {confirmLabel}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

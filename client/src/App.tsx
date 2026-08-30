@@ -21,6 +21,11 @@ interface RouteState {
   roomId: string | null;
 }
 
+interface NoticeState {
+  kind: "info" | "warning";
+  message: string;
+}
+
 let requestSequence = 0;
 
 function requestId(): string {
@@ -75,12 +80,24 @@ export function App(): ReactElement {
   const [selfPlayerId, setSelfPlayerId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [notice, setNotice] = useState<NoticeState | null>(null);
   const [copied, setCopied] = useState(false);
 
   const socketRef = useRef<WebSocket | null>(null);
   const routeRef = useRef(route);
   const stoppedRef = useRef(false);
   const retryTimerRef = useRef<number | null>(null);
+  const noticeTimerRef = useRef<number | null>(null);
+  const wasDisconnectedRef = useRef(false);
+
+  const showNotice = useCallback((message: string, kind: NoticeState["kind"] = "info"): void => {
+    if (noticeTimerRef.current !== null) window.clearTimeout(noticeTimerRef.current);
+    setNotice({ kind, message });
+    noticeTimerRef.current = window.setTimeout(() => {
+      setNotice(null);
+      noticeTimerRef.current = null;
+    }, 3_000);
+  }, []);
 
   const updateRoute = useCallback((next: RouteState): void => {
     routeRef.current = next;
@@ -128,8 +145,11 @@ export function App(): ReactElement {
         case "SESSION_ESTABLISHED":
           localStorage.setItem(sessionKey(message.roomId), message.sessionToken);
           setSelfPlayerId(message.playerId);
-          setBusy(false);
           setError(null);
+          if (message.reconnected && wasDisconnectedRef.current) {
+            showNotice("게임에 다시 연결되었습니다.");
+            wasDisconnectedRef.current = false;
+          }
           goToRoom(message.roomId, message.reconnected);
           break;
         case "ROOM_VIEW":
@@ -138,7 +158,6 @@ export function App(): ReactElement {
           goToRoom(message.room.id, true);
           break;
         case "COMMAND_OK":
-          setBusy(false);
           break;
         case "LEFT":
           localStorage.removeItem(sessionKey(message.roomId));
@@ -146,12 +165,17 @@ export function App(): ReactElement {
           goHome();
           break;
         case "GAME_ABORTED":
-          setBusy(false);
-          setError(message.message);
+          setError(null);
+          showNotice(message.message, "warning");
           break;
         case "ERROR": {
-          setBusy(false);
-          setError(message.message);
+          if (message.code === "STALE_REVISION") {
+            setError(null);
+            showNotice("최신 게임 상태로 동기화했습니다.");
+          } else {
+            setBusy(false);
+            setError(message.message);
+          }
           const activeRoomId = routeRef.current.roomId;
           if (message.code === "INVALID_SESSION" && activeRoomId) {
             localStorage.removeItem(sessionKey(activeRoomId));
@@ -198,6 +222,8 @@ export function App(): ReactElement {
       socket.addEventListener("close", () => {
         if (socketRef.current !== socket || stoppedRef.current) return;
         setConnection("RECONNECTING");
+        setBusy(true);
+        wasDisconnectedRef.current = true;
         retryTimerRef.current = window.setTimeout(connect, 1_000);
       });
       socket.addEventListener("error", () => {
@@ -212,10 +238,11 @@ export function App(): ReactElement {
       stoppedRef.current = true;
       window.removeEventListener("popstate", onPopState);
       if (retryTimerRef.current !== null) window.clearTimeout(retryTimerRef.current);
+      if (noticeTimerRef.current !== null) window.clearTimeout(noticeTimerRef.current);
       socketRef.current?.close();
       socketRef.current = null;
     };
-  }, [goHome, goToRoom, updateRoute]);
+  }, [goHome, goToRoom, showNotice, updateRoute]);
 
   function requireNickname(): string | null {
     const validationError = nicknameError(nickname);
@@ -333,6 +360,18 @@ export function App(): ReactElement {
     );
   }
 
+  function returnToLobby(): void {
+    if (!room) return;
+    setError(null);
+    setBusy(
+      send({
+        event: "RETURN_TO_LOBBY",
+        requestId: requestId(),
+        expectedRevision: room.revision,
+      }),
+    );
+  }
+
   async function copyInvite(): Promise<void> {
     if (!room) return;
     const url = `${window.location.origin}${BASE_PATH}r/${room.id}`;
@@ -414,9 +453,12 @@ export function App(): ReactElement {
         <Shell banner={connectionBanner}>
           <>
             <ErrorNotice message={error} />
+            <TransientNotice notice={notice} />
             <GameBoard
-              busy={busy}
+              busy={busy || connection !== "CONNECTED"}
+              connected={connection === "CONNECTED"}
               onLeave={leaveRoom}
+              onReturnToLobby={returnToLobby}
               onRoll={rollDice}
               onScore={scoreCategory}
               onSetHeld={setHeldDice}
@@ -472,6 +514,7 @@ export function App(): ReactElement {
           </div>
 
           <ErrorNotice message={error} />
+          <TransientNotice notice={notice} />
           <div className="room-actions">
             {room.status === "LOBBY" && (
               <button className="button primary" type="button" onClick={toggleReady} disabled={busy}>
@@ -567,10 +610,10 @@ function Shell({
           <span className="brand-die">⚄</span>
           <span><strong>YACHT DICE</strong><small>ONLINE</small></span>
         </a>
-        <span className="phase-badge">PHASE 2</span>
+        <span className="phase-badge">PHASE 3</span>
       </header>
       <main>{children}</main>
-      <footer>Yacht Dice Online · Multiplayer lobby foundation</footer>
+      <footer>Yacht Dice Online · Server-authoritative tabletop play</footer>
     </div>
   );
 }
@@ -578,4 +621,13 @@ function Shell({
 function ErrorNotice({ message }: { message: string | null }): ReactElement | null {
   if (!message) return null;
   return <div className="error-notice" role="alert">{message}</div>;
+}
+
+function TransientNotice({ notice }: { notice: NoticeState | null }): ReactElement | null {
+  if (!notice) return null;
+  return (
+    <div className={`transient-notice ${notice.kind}`} role="status">
+      {notice.message}
+    </div>
+  );
 }

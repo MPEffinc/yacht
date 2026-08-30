@@ -4,6 +4,7 @@ import {
   createYachtApplication,
   type YachtApplication,
 } from "../src/app.js";
+import { SCORE_CATEGORIES } from "../src/game/types.js";
 
 interface WireMessage {
   event?: string;
@@ -262,5 +263,146 @@ describe("Yacht WebSocket lobby", () => {
     expect(scoredGame.rollsUsed).toBe(0);
     expect(scoredGame.dice.every((die) => die.value === null && !die.held)).toBe(true);
     expect(scoredGame.scoreCards[aSession.playerId as string]?.scores.CHOICE).toBeGreaterThanOrEqual(5);
+  });
+
+  it("finishes a match, returns to the same lobby, and starts a clean rematch", async () => {
+    const a = await connect();
+    a.send({ event: "CREATE_ROOM", requestId: "rematch-create", nickname: "Alice", maxPlayers: 2 });
+    const aSession = await a.waitFor((message) => message.event === "SESSION_ESTABLISHED");
+    const roomId = aSession.roomId as string;
+    await a.waitFor(roomView((room) => room.revision === 1));
+
+    const b = await connect();
+    b.send({ event: "JOIN_ROOM", requestId: "rematch-join", roomId, nickname: "Bob" });
+    const bSession = await b.waitFor((message) => message.event === "SESSION_ESTABLISHED");
+    await Promise.all([
+      a.waitFor(roomView((room) => room.revision === 2)),
+      b.waitFor(roomView((room) => room.revision === 2)),
+    ]);
+
+    async function mutate(
+      client: TestClient,
+      request: Record<string, unknown>,
+      nextRevision: number,
+    ): Promise<Record<string, unknown>> {
+      client.send(request);
+      const [aView, bView] = await Promise.all([
+        a.waitFor(roomView((room) => room.revision === nextRevision)),
+        b.waitFor(roomView((room) => room.revision === nextRevision)),
+        client.waitFor(
+          (message) => message.event === "COMMAND_OK" && message.requestId === request.requestId,
+        ),
+      ]);
+      expect(aView.room).toEqual(bView.room);
+      return aView.room as Record<string, unknown>;
+    }
+
+    let revision = 2;
+    await mutate(
+      a,
+      { event: "SET_READY", requestId: "rematch-ready-a", ready: true },
+      ++revision,
+    );
+    await mutate(
+      b,
+      { event: "SET_READY", requestId: "rematch-ready-b", ready: true },
+      ++revision,
+    );
+    let latest = await mutate(
+      a,
+      { event: "START_GAME", requestId: "rematch-start" },
+      ++revision,
+    );
+
+    const clientsByPlayer = new Map<string, TestClient>([
+      [aSession.playerId as string, a],
+      [bSession.playerId as string, b],
+    ]);
+    for (const category of SCORE_CATEGORIES) {
+      for (let playerTurn = 0; playerTurn < 2; playerTurn += 1) {
+        const game = latest.game as { currentPlayerId: string };
+        const actor = clientsByPlayer.get(game.currentPlayerId)!;
+        latest = await mutate(
+          actor,
+          {
+            event: "ROLL_DICE",
+            requestId: `rematch-roll-${revision}`,
+            expectedRevision: revision,
+          },
+          ++revision,
+        );
+        latest = await mutate(
+          actor,
+          {
+            event: "SCORE_CATEGORY",
+            requestId: `rematch-score-${revision}`,
+            expectedRevision: revision,
+            category,
+          },
+          ++revision,
+        );
+      }
+    }
+    expect(latest).toMatchObject({
+      id: roomId,
+      status: "STARTED",
+      game: { phase: "FINISHED", completedTurns: 24 },
+    });
+
+    latest = await mutate(
+      a,
+      {
+        event: "RETURN_TO_LOBBY",
+        requestId: "rematch-return",
+        expectedRevision: revision,
+      },
+      ++revision,
+    );
+    expect(latest).toMatchObject({
+      id: roomId,
+      status: "LOBBY",
+      game: null,
+      hostPlayerId: aSession.playerId,
+    });
+    expect(
+      (latest.players as Array<{ id: string; ready: boolean }>).map((player) => player.id),
+    ).toEqual([aSession.playerId, bSession.playerId]);
+    expect(
+      (latest.players as Array<{ ready: boolean }>).every((player) => !player.ready),
+    ).toBe(true);
+
+    await mutate(
+      a,
+      { event: "SET_READY", requestId: "rematch-ready-again-a", ready: true },
+      ++revision,
+    );
+    await mutate(
+      b,
+      { event: "SET_READY", requestId: "rematch-ready-again-b", ready: true },
+      ++revision,
+    );
+    latest = await mutate(
+      a,
+      { event: "START_GAME", requestId: "rematch-start-again" },
+      ++revision,
+    );
+    const newGame = latest.game as {
+      phase: string;
+      completedTurns: number;
+      rollsUsed: number;
+      dice: Array<{ value: number | null; held: boolean }>;
+      scoreCards: Record<string, { scores: Record<string, number | null> }>;
+      winnerPlayerIds: string[];
+    };
+    expect(newGame.phase).toBe("PLAYING");
+    expect(newGame.completedTurns).toBe(0);
+    expect(newGame.rollsUsed).toBe(0);
+    expect(newGame.dice.every((die) => die.value === null && !die.held)).toBe(true);
+    expect(newGame.winnerPlayerIds).toEqual([]);
+    expect(
+      Object.values(newGame.scoreCards).every((card) =>
+        Object.values(card.scores).every((score) => score === null),
+      ),
+    ).toBe(true);
   });
 });
