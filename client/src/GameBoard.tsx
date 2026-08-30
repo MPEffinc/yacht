@@ -57,11 +57,20 @@ const combinationPriority: ScoreCategory[] = [
 ];
 
 const combinationLabels: Partial<Record<ScoreCategory, string>> = {
-  YACHT: "YACHT!",
-  LARGE_STRAIGHT: "LARGE STRAIGHT",
-  FULL_HOUSE: "FULL HOUSE",
-  FOUR_OF_A_KIND: "4 OF A KIND",
-  SMALL_STRAIGHT: "SMALL STRAIGHT",
+  YACHT: "Yacht!",
+  LARGE_STRAIGHT: "Large Straight",
+  FULL_HOUSE: "Full House",
+  FOUR_OF_A_KIND: "4 of a Kind",
+  SMALL_STRAIGHT: "Small Straight",
+};
+
+const lowerCategoryGlyphs: Partial<Record<ScoreCategory, number[]>> = {
+  CHOICE: [0, 4, 7, 10, 14],
+  FOUR_OF_A_KIND: [1, 3, 11, 13],
+  FULL_HOUSE: [0, 2, 4, 11, 13],
+  SMALL_STRAIGHT: [0, 4, 8, 12],
+  LARGE_STRAIGHT: [0, 4, 7, 10, 14],
+  YACHT: [0, 2, 7, 12, 14],
 };
 
 const ROLL_PRESENTATION_MS = 780;
@@ -543,6 +552,20 @@ export function GameBoard({
 
               <div className="roll-zone">
                 <span className="felt-label">ROLLING FELT</span>
+                {combinationAlert && (
+                  <div
+                    className={combinationAlert.primary === "YACHT" ? "combination-alert yacht" : "combination-alert"}
+                    key={`${combinationAlert.revision}-${combinationAlert.primary}`}
+                    role="status"
+                  >
+                    <strong>{combinationLabels[combinationAlert.primary]}</strong>
+                    {combinationAlert.secondary.length > 0 && (
+                      <small>
+                        ALSO SCORES · {combinationAlert.secondary.map((category) => combinationLabels[category]).join(" · ")}
+                      </small>
+                    )}
+                  </div>
+                )}
                 <div className="rolling-dice">
                   {game.dice.map((die, index) =>
                     die.held || die.value === null ? null : (
@@ -569,20 +592,6 @@ export function GameBoard({
             </div>
 
             <div className="tray-control-rim">
-                {combinationAlert && (
-                  <div
-                    className={combinationAlert.primary === "YACHT" ? "combination-alert yacht" : "combination-alert"}
-                    key={`${combinationAlert.revision}-${combinationAlert.primary}`}
-                    role="status"
-                  >
-                    <strong>{combinationLabels[combinationAlert.primary]}</strong>
-                    {combinationAlert.secondary.length > 0 && (
-                      <small>
-                        ALSO SCORES · {combinationAlert.secondary.map((category) => combinationLabels[category]).join(" · ")}
-                      </small>
-                    )}
-                  </div>
-                )}
                 <button
                   className="roll-again-button"
                   disabled={!canRoll}
@@ -700,10 +709,22 @@ function PipFace({ value, compact = false }: { value: DieValue | null; compact?:
 
 function CategoryLabel({ category }: { category: ScoreCategory }): ReactElement {
   const face = upperFaces[category];
+  const glyph = lowerCategoryGlyphs[category];
   return (
     <span className="category-label">
       <span aria-hidden="true" className={face ? "category-symbol upper" : "category-symbol lower"}>
-        {face ? <PipFace compact value={face} /> : categoryLabels[category].slice(0, 1)}
+        {face ? (
+          <PipFace compact value={face} />
+        ) : (
+          <span className="category-mark-grid">
+            {glyph?.map((position) => (
+              <i
+                key={position}
+                style={{ gridColumn: position % 5 + 1, gridRow: Math.floor(position / 5) + 1 }}
+              />
+            ))}
+          </span>
+        )}
       </span>
       {categoryLabels[category]}
     </span>
@@ -837,7 +858,8 @@ function ScoreSheet({
     const scroller = scoreScrollRef.current;
     const header = currentHeaderRef.current;
     if (!scroller || !header || scroller.scrollWidth <= scroller.clientWidth) return;
-    const stickyCategoryWidth = 150;
+    const categoryHeader = scroller.querySelector<HTMLTableCellElement>("th:first-child");
+    const stickyCategoryWidth = categoryHeader?.getBoundingClientRect().width ?? 220;
     const visibleLeft = scroller.scrollLeft + stickyCategoryWidth;
     const visibleRight = scroller.scrollLeft + scroller.clientWidth;
     const headerLeft = header.offsetLeft;
@@ -901,7 +923,11 @@ function ScoreSheet({
         <th scope="row">{label}</th>
         {game.playerOrder.map((playerId) => (
           <td className={columnClass(playerId)} key={playerId}>
-            <strong>{game.scoreCards[playerId]![key]}</strong>
+            <strong>
+              {key === "upperSubtotal"
+                ? `${game.scoreCards[playerId]![key]}/63`
+                : game.scoreCards[playerId]![key]}
+            </strong>
           </td>
         ))}
       </tr>
@@ -931,14 +957,16 @@ function ScoreSheet({
           <small>{game.phase === "FINISHED" ? "점수표가 최종 결과입니다" : "예상 점수를 눌러 기록"}</small>
         </div>
         <div className="score-turn">
-          <span>TURN</span>
+          <span>Turn</span>
           <strong>{game.round}<small>/12</small></strong>
         </div>
       </div>
       <div className="score-table-scroll" ref={scoreScrollRef}>
         <table
           className="score-table"
-          style={{ minWidth: `${150 + game.playerOrder.length * 135}px` }}
+          style={{
+            minWidth: `calc(var(--category-column-width) + ${game.playerOrder.length} * var(--score-column-width))`,
+          }}
         >
           <thead>
             <tr>
@@ -973,6 +1001,9 @@ function ScoreSheet({
             {UPPER_CATEGORIES.map(categoryRow)}
             {derivedRow("Subtotal", "upperSubtotal")}
             {derivedRow("+35 Bonus", "upperBonus", "derived-row bonus-row")}
+            <tr className="bonus-rule-row">
+              <td colSpan={game.playerOrder.length + 1}>Bonus if Aces–Sixes total 63 points or more</td>
+            </tr>
             {LOWER_CATEGORIES.map(categoryRow)}
             {derivedRow("Total", "total", "total-row")}
           </tbody>
