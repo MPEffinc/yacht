@@ -2,26 +2,43 @@ import type { ReactElement } from "react";
 import {
   LOWER_CATEGORIES,
   UPPER_CATEGORIES,
+  type DieValue,
   type PublicRoomSnapshot,
   type ScoreCategory,
 } from "./protocol";
 
 const categoryLabels: Record<ScoreCategory, string> = {
-  ONES: "Ones",
-  TWOS: "Twos",
+  ONES: "Aces",
+  TWOS: "Deuces",
   THREES: "Threes",
   FOURS: "Fours",
   FIVES: "Fives",
   SIXES: "Sixes",
   CHOICE: "Choice",
-  FOUR_OF_A_KIND: "Four of a Kind",
+  FOUR_OF_A_KIND: "4 of a Kind",
   FULL_HOUSE: "Full House",
-  SMALL_STRAIGHT: "Small Straight",
-  LARGE_STRAIGHT: "Large Straight",
+  SMALL_STRAIGHT: "S. Straight",
+  LARGE_STRAIGHT: "L. Straight",
   YACHT: "Yacht",
 };
 
-const dieFaces = ["", "⚀", "⚁", "⚂", "⚃", "⚄", "⚅"];
+const upperFaces: Partial<Record<ScoreCategory, DieValue>> = {
+  ONES: 1,
+  TWOS: 2,
+  THREES: 3,
+  FOURS: 4,
+  FIVES: 5,
+  SIXES: 6,
+};
+
+const pipPositions: Record<DieValue, number[]> = {
+  1: [4],
+  2: [0, 8],
+  3: [0, 4, 8],
+  4: [0, 2, 6, 8],
+  5: [0, 2, 4, 6, 8],
+  6: [0, 2, 3, 5, 6, 8],
+};
 
 interface GameBoardProps {
   room: PublicRoomSnapshot;
@@ -50,13 +67,13 @@ export function GameBoard({
   const isMyTurn = game.phase === "PLAYING" && game.currentPlayerId === selfPlayerId;
   const currentDisconnected = currentPlayer?.connectionState === "DISCONNECTED_GRACE";
   const canRoll = isMyTurn && game.rollsRemaining > 0 && !busy;
-  const canHold = isMyTurn && game.rollsUsed > 0 && game.rollsRemaining > 0 && !busy;
+  const canKeep = isMyTurn && game.rollsUsed > 0 && game.rollsRemaining > 0 && !busy;
 
-  function toggleHeld(index: number): void {
-    if (!canHold) return;
+  function toggleKept(index: number): void {
+    if (!canKeep) return;
     const heldIndices = game.dice
-      .map((die, dieIndex) => ({ held: dieIndex === index ? !die.held : die.held, dieIndex }))
-      .filter((entry) => entry.held)
+      .map((die, dieIndex) => ({ kept: dieIndex === index ? !die.held : die.held, dieIndex }))
+      .filter((entry) => entry.kept)
       .map((entry) => entry.dieIndex);
     onSetHeld(heldIndices);
   }
@@ -65,7 +82,7 @@ export function GameBoard({
     const label = categoryLabels[category];
     const warning =
       score === 0
-        ? `\n0점으로 기록되며 이 칸은 다시 사용할 수 없습니다.`
+        ? "\n0점으로 기록되며 이 칸은 다시 사용할 수 없습니다."
         : "";
     if (window.confirm(`${label}에 ${score}점을 기록하시겠습니까?${warning}`)) {
       onScore(category);
@@ -82,13 +99,13 @@ export function GameBoard({
 
   return (
     <section className="game-layout">
-      <div className="game-topbar">
+      <header className="game-heading">
         <div>
-          <p className="eyebrow">ROOM {room.id}</p>
-          <h1>Round {game.round} <span>/ 12</span></h1>
+          <p className="eyebrow">TABLE {room.id}</p>
+          <h1>Yacht Dice</h1>
         </div>
-        <div className="turn-pill">
-          <span>{game.phase === "FINISHED" ? "GAME OVER" : "CURRENT TURN"}</span>
+        <div className="game-heading-status" aria-live="polite">
+          <span>{game.phase === "FINISHED" ? "GAME OVER" : "CURRENT PLAYER"}</span>
           <strong>
             {game.phase === "FINISHED"
               ? "게임 종료"
@@ -99,83 +116,90 @@ export function GameBoard({
                   : `${currentPlayer?.nickname ?? "플레이어"}님의 차례입니다`}
           </strong>
         </div>
-      </div>
+      </header>
 
-      {game.phase === "FINISHED" && (
-        <div className="result-panel">
-          <p className="eyebrow">FINAL RESULT</p>
-          <h2>게임 종료</h2>
-          <ol>
-            {standings.map((entry) => {
-              const rank = standings.findIndex((candidate) => candidate.total === entry.total) + 1;
-              const winner = game.winnerPlayerIds.includes(entry.playerId);
-              return (
-                <li key={entry.playerId} className={winner ? "winner" : ""}>
-                  <span>{rank}위</span>
-                  <strong>{winner && "★ "}{entry.nickname}</strong>
-                  <b>{entry.total}</b>
-                </li>
-              );
-            })}
-          </ol>
-        </div>
-      )}
+      <div className="tabletop-board">
+        <ScoreSheet
+          busy={busy}
+          isMyTurn={isMyTurn}
+          onConfirmScore={confirmScore}
+          playersById={playersById}
+          room={room}
+          selfPlayerId={selfPlayerId}
+        />
 
-      <div className="game-main-grid">
-        <div className="dice-panel card">
-          <div className="section-title game-section-title">
-            <div>
-              <h2>주사위</h2>
-              <p>{game.rollsUsed === 0 ? "첫 Roll은 모든 주사위를 굴립니다." : "주사위를 눌러 Hold하세요."}</p>
+        <section className="dice-station" aria-label="Dice tray">
+          {game.phase === "FINISHED" ? (
+            <ResultPanel standings={standings} winnerPlayerIds={game.winnerPlayerIds} />
+          ) : (
+            <div className="turn-card">
+              <span>TURN</span>
+              <strong>{game.round}<small>/12</small></strong>
+              <p>{isMyTurn ? "주사위를 선택하세요" : "상대의 플레이를 기다립니다"}</p>
             </div>
-            <span className="roll-count">남은 굴림 {game.rollsRemaining}회</span>
+          )}
+
+          <div className="dice-tray">
+            <div className="keep-zone">
+              <div className="tray-label">
+                <strong>KEEP</strong>
+                <span>보관한 주사위</span>
+              </div>
+              <div className="keep-slots">
+                {game.dice.map((die, index) => (
+                  <div className={die.held ? "keep-slot occupied" : "keep-slot"} key={index}>
+                    {die.held ? (
+                      <DieButton
+                        canInteract={canKeep}
+                        die={die}
+                        index={index}
+                        kept
+                        onClick={() => toggleKept(index)}
+                      />
+                    ) : (
+                      <span aria-hidden="true" className="slot-number">{index + 1}</span>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="roll-zone">
+              <span className="felt-label">ROLL AREA</span>
+              <div className="rolling-dice">
+                {game.dice.map((die, index) =>
+                  die.held ? null : (
+                    <DieButton
+                      canInteract={canKeep && die.value !== null}
+                      die={die}
+                      index={index}
+                      kept={false}
+                      key={index}
+                      onClick={() => toggleKept(index)}
+                    />
+                  ),
+                )}
+                {game.dice.every((die) => die.held) && (
+                  <p className="all-kept-message">모든 주사위를 KEEP했습니다.</p>
+                )}
+              </div>
+            </div>
           </div>
-          <div className="dice-grid" aria-label="주사위 5개">
-            {game.dice.map((die, index) => (
-              <button
-                aria-label={`${index + 1}번 주사위${die.held ? ", Hold됨" : ""}`}
-                className={`game-die${die.held ? " held" : ""}`}
-                disabled={!canHold || die.value === null}
-                key={index}
-                onClick={() => toggleHeld(index)}
-                type="button"
-              >
-                <span>{die.value === null ? "–" : dieFaces[die.value]}</span>
-                <small>{die.held ? "HOLD" : ""}</small>
-              </button>
-            ))}
-          </div>
+
           <button
-            className="button accent roll-button"
+            className="roll-again-button"
             disabled={!canRoll}
             onClick={onRoll}
             type="button"
           >
-            {busy ? "처리 중..." : game.rollsUsed === 0 ? "주사위 굴리기" : "다시 굴리기"}
+            {busy ? "처리 중..." : game.rollsUsed === 0 ? "Roll Dice" : "Roll Again"}
           </button>
-          {!isMyTurn && game.phase === "PLAYING" && (
-            <p className="control-hint">현재 플레이어의 선택을 기다리고 있습니다.</p>
+          <p className="rolls-left">{game.rollsRemaining} rolls left</p>
+          {game.rollsUsed > 0 && game.rollsRemaining > 0 && isMyTurn && (
+            <p className="keep-help">주사위를 누르면 KEEP 영역으로 이동합니다.</p>
           )}
-        </div>
-
-        <div className="score-summary card">
-          <p className="eyebrow">MY SCORE</p>
-          <strong>{selfPlayerId ? game.scoreCards[selfPlayerId]?.total ?? 0 : 0}</strong>
-          <span>점</span>
-          <small>
-            {selfPlayerId ? game.scoreCards[selfPlayerId]?.completedCategories ?? 0 : 0} / 12 categories
-          </small>
-        </div>
+        </section>
       </div>
-
-      <ScoreBoard
-        busy={busy}
-        isMyTurn={isMyTurn}
-        onConfirmScore={confirmScore}
-        playersById={playersById}
-        room={room}
-        selfPlayerId={selfPlayerId}
-      />
 
       <div className="game-footer-actions">
         <button className="button danger" disabled={busy} onClick={onLeave} type="button">
@@ -186,7 +210,66 @@ export function GameBoard({
   );
 }
 
-function ScoreBoard({
+function DieButton({
+  die,
+  index,
+  kept,
+  canInteract,
+  onClick,
+}: {
+  die: { value: DieValue | null; held: boolean };
+  index: number;
+  kept: boolean;
+  canInteract: boolean;
+  onClick: () => void;
+}): ReactElement {
+  const action = kept ? "KEEP 해제" : "KEEP 설정";
+  return (
+    <button
+      aria-label={`${index + 1}번 주사위, ${die.value ?? "아직 굴리지 않음"}, ${action}`}
+      className={kept ? "physical-die kept" : "physical-die"}
+      data-die-index={index}
+      data-die-value={die.value ?? "empty"}
+      disabled={!canInteract}
+      onClick={onClick}
+      type="button"
+    >
+      <PipFace value={die.value} />
+      {kept && <small>KEEP</small>}
+    </button>
+  );
+}
+
+function PipFace({ value, compact = false }: { value: DieValue | null; compact?: boolean }): ReactElement {
+  return (
+    <span aria-hidden="true" className={compact ? "pip-face compact" : "pip-face"}>
+      {value === null ? (
+        <i className="empty-die-mark">–</i>
+      ) : (
+        pipPositions[value].map((position) => (
+          <i
+            className={`pip pip-${position}`}
+            key={position}
+          />
+        ))
+      )}
+    </span>
+  );
+}
+
+function CategoryLabel({ category }: { category: ScoreCategory }): ReactElement {
+  const face = upperFaces[category];
+  return (
+    <span className="category-label">
+      <span aria-hidden="true" className={face ? "category-symbol upper" : "category-symbol lower"}>
+        {face ? <PipFace compact value={face} /> : categoryLabels[category].slice(0, 1)}
+      </span>
+      {categoryLabels[category]}
+    </span>
+  );
+}
+
+function ScoreSheet({
   room,
   selfPlayerId,
   isMyTurn,
@@ -202,11 +285,18 @@ function ScoreBoard({
   onConfirmScore: (category: ScoreCategory, score: number) => void;
 }): ReactElement {
   const game = room.game!;
+  const columnClass = (playerId: string): string =>
+    [
+      playerId === selfPlayerId ? "self-column" : "",
+      playerId === game.currentPlayerId ? "current-column" : "",
+    ]
+      .filter(Boolean)
+      .join(" ");
 
   function categoryRow(category: ScoreCategory): ReactElement {
     return (
       <tr key={category}>
-        <th scope="row">{categoryLabels[category]}</th>
+        <th scope="row"><CategoryLabel category={category} /></th>
         {game.playerOrder.map((playerId) => {
           const score = game.scoreCards[playerId]!.scores[category];
           const preview = game.availableScores?.[category];
@@ -217,11 +307,12 @@ function ScoreBoard({
             preview !== undefined &&
             !busy;
           return (
-            <td className={playerId === selfPlayerId ? "self-column" : ""} key={playerId}>
+            <td className={columnClass(playerId)} key={playerId}>
               {score !== null ? (
                 <strong>{score}</strong>
               ) : preview !== undefined && playerId === game.currentPlayerId ? (
                 <button
+                  aria-label={`${categoryLabels[category]}에 ${preview}점 기록`}
                   className="score-preview"
                   disabled={!selectable}
                   onClick={() => onConfirmScore(category, preview)}
@@ -241,14 +332,14 @@ function ScoreBoard({
 
   function derivedRow(
     label: string,
-    key: "upperSubtotal" | "upperBonus" | "lowerSubtotal" | "total",
+    key: "upperSubtotal" | "upperBonus" | "total",
     className = "derived-row",
   ): ReactElement {
     return (
       <tr className={className}>
         <th scope="row">{label}</th>
         {game.playerOrder.map((playerId) => (
-          <td className={playerId === selfPlayerId ? "self-column" : ""} key={playerId}>
+          <td className={columnClass(playerId)} key={playerId}>
             <strong>{game.scoreCards[playerId]![key]}</strong>
           </td>
         ))}
@@ -257,39 +348,64 @@ function ScoreBoard({
   }
 
   return (
-    <div className="scoreboard-card card">
-      <div className="scoreboard-heading">
+    <section className="score-sheet" aria-label="Yacht Dice score sheet">
+      <div className="score-sheet-heading">
         <div>
-          <p className="eyebrow">SCORE CARD</p>
-          <h2>점수판</h2>
+          <span>SCORE SHEET</span>
+          <strong>Turn {game.round}/12</strong>
         </div>
-        <p>괄호 점수는 현재 Roll의 예상 점수입니다.</p>
+        <small>예상 점수를 눌러 기록</small>
       </div>
       <div className="score-table-scroll">
         <table className="score-table">
           <thead>
             <tr>
-              <th scope="col">Category</th>
+              <th scope="col">Categories</th>
               {game.playerOrder.map((playerId) => (
-                <th className={playerId === selfPlayerId ? "self-column" : ""} key={playerId} scope="col">
-                  {playersById.get(playerId)?.isHost && <span className="host-star">★ </span>}
+                <th className={columnClass(playerId)} key={playerId} scope="col">
                   {playersById.get(playerId)?.nickname ?? "Unknown"}
-                  {playerId === selfPlayerId && <small>나</small>}
+                  {playerId === selfPlayerId && <small>YOU</small>}
                 </th>
               ))}
             </tr>
           </thead>
           <tbody>
             {UPPER_CATEGORIES.map(categoryRow)}
-            {derivedRow("Upper subtotal", "upperSubtotal")}
-            {derivedRow("Bonus (63+)", "upperBonus", "derived-row bonus-row")}
-            <tr className="section-break"><th colSpan={game.playerOrder.length + 1}>Lower section</th></tr>
+            {derivedRow("Subtotal", "upperSubtotal")}
+            {derivedRow("+35 Bonus", "upperBonus", "derived-row bonus-row")}
             {LOWER_CATEGORIES.map(categoryRow)}
-            {derivedRow("Lower subtotal", "lowerSubtotal")}
-            {derivedRow("TOTAL", "total", "total-row")}
+            {derivedRow("Total", "total", "total-row")}
           </tbody>
         </table>
       </div>
+    </section>
+  );
+}
+
+function ResultPanel({
+  standings,
+  winnerPlayerIds,
+}: {
+  standings: Array<{ playerId: string; nickname: string; total: number }>;
+  winnerPlayerIds: string[];
+}): ReactElement {
+  return (
+    <div className="result-panel">
+      <p className="eyebrow">FINAL RESULT</p>
+      <h2>게임 종료</h2>
+      <ol>
+        {standings.map((entry) => {
+          const rank = standings.findIndex((candidate) => candidate.total === entry.total) + 1;
+          const winner = winnerPlayerIds.includes(entry.playerId);
+          return (
+            <li className={winner ? "winner" : ""} key={entry.playerId}>
+              <span>{rank}위</span>
+              <strong>{winner && "★ "}{entry.nickname}</strong>
+              <b>{entry.total}</b>
+            </li>
+          );
+        })}
+      </ol>
     </div>
   );
 }

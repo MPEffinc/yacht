@@ -44,9 +44,10 @@ export function calculateScore(
   }
   if (category === "FULL_HOUSE") {
     const distribution = [...counts.values()].sort((left, right) => left - right);
-    return distribution.length === 2 && distribution[0] === 2 && distribution[1] === 3
-      ? sum
-      : 0;
+    const isThreeAndTwo =
+      distribution.length === 2 && distribution[0] === 2 && distribution[1] === 3;
+    const isYacht = counts.size === 1;
+    return isThreeAndTwo || isYacht ? sum : 0;
   }
   const unique = new Set(dice);
   if (category === "SMALL_STRAIGHT") {

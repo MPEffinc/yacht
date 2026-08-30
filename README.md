@@ -102,7 +102,9 @@ CHOICE  FOUR_OF_A_KIND  FULL_HOUSE
 SMALL_STRAIGHT  LARGE_STRAIGHT  YACHT
 ```
 
-Upper 6개 합이 63점 이상이면 derived bonus +35점입니다. Choice는 전체 합, Four of a Kind는 같은 눈 4개 이상일 때 전체 합, Full House는 정확히 2+3일 때 전체 합입니다. Small Straight는 연속 4개 포함 시 15점, Large Straight는 정확한 연속 5개일 때 30점, Yacht는 같은 눈 5개일 때 50점입니다. 추가 Yacht bonus나 Joker rule은 없습니다.
+Upper 6개 합이 63점 이상이면 derived bonus +35점입니다. Choice는 전체 합, Four of a Kind는 같은 눈 4개 이상일 때 전체 합, Full House는 3+2 조합 또는 같은 눈 5개(Yacht)일 때 전체 합입니다. Small Straight는 연속 4개 포함 시 15점, Large Straight는 정확한 연속 5개일 때 30점, Yacht는 같은 눈 5개일 때 50점입니다. 추가 Yacht bonus나 Joker rule은 없으며 이 규칙에서 가능한 이론상 최고점은 325점입니다.
+
+점수 규칙과 게임 화면 용어는 Nintendo Switch의 *51 Worldwide Games / Clubhouse Games: 51 Worldwide Classics*에 수록된 Yacht Dice와 호환되도록 구성했습니다. 이 프로젝트는 독립적인 비공식 구현이며 Nintendo와 제휴하거나 Nintendo의 승인을 받은 제품이 아닙니다.
 
 ## Game state and turn flow
 

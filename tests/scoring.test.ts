@@ -24,11 +24,20 @@ describe("RULESET_V1 scoring", () => {
     expect(calculateScore("FOUR_OF_A_KIND", [4, 4, 4, 5, 6])).toBe(0);
   });
 
-  it("requires an exact 2+3 Full House distribution", () => {
+  it("scores Full House for a 2+3 distribution or a Yacht", () => {
     expect(calculateScore("FULL_HOUSE", [3, 3, 3, 5, 5])).toBe(19);
     expect(calculateScore("FULL_HOUSE", [6, 6, 6, 5, 5])).toBe(28);
-    expect(calculateScore("FULL_HOUSE", [4, 4, 4, 4, 4])).toBe(0);
+    expect(calculateScore("FULL_HOUSE", [1, 1, 1, 1, 1])).toBe(5);
+    expect(calculateScore("FULL_HOUSE", [4, 4, 4, 4, 4])).toBe(20);
+    expect(calculateScore("FULL_HOUSE", [6, 6, 6, 6, 6])).toBe(30);
     expect(calculateScore("FULL_HOUSE", [3, 3, 3, 3, 5])).toBe(0);
+  });
+
+  it("scores five sixes in every compatible lower category", () => {
+    const yacht = [6, 6, 6, 6, 6] as const;
+    expect(calculateScore("FOUR_OF_A_KIND", yacht)).toBe(30);
+    expect(calculateScore("FULL_HOUSE", yacht)).toBe(30);
+    expect(calculateScore("YACHT", yacht)).toBe(50);
   });
 
   it("scores Small Straights with duplicate dice", () => {
@@ -55,7 +64,7 @@ describe("RULESET_V1 scoring", () => {
     expect(calculateUpperBonus(64)).toBe(35);
   });
 
-  it("distinguishes unused null from a locked zero and reaches the 323 maximum", () => {
+  it("distinguishes unused null from a locked zero and reaches the 325 maximum", () => {
     const card = createEmptyScoreCard();
     card.ONES = 5;
     card.TWOS = 10;
@@ -65,15 +74,15 @@ describe("RULESET_V1 scoring", () => {
     card.SIXES = 30;
     card.CHOICE = 30;
     card.FOUR_OF_A_KIND = 30;
-    card.FULL_HOUSE = 28;
+    card.FULL_HOUSE = 30;
     card.SMALL_STRAIGHT = 15;
     card.LARGE_STRAIGHT = 30;
     card.YACHT = 50;
     expect(scoreCardTotals(card)).toEqual({
       upperSubtotal: 105,
       upperBonus: 35,
-      lowerSubtotal: 183,
-      total: 323,
+      lowerSubtotal: 185,
+      total: 325,
       completedCategories: 12,
     });
     card.YACHT = 0;
