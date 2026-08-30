@@ -64,6 +64,15 @@ const combinationLabels: Partial<Record<ScoreCategory, string>> = {
   SMALL_STRAIGHT: "Small Straight",
 };
 
+const lowerCategoryGlyphs: Partial<Record<ScoreCategory, number[]>> = {
+  CHOICE: [0, 4, 7, 10, 14],
+  FOUR_OF_A_KIND: [1, 3, 11, 13],
+  FULL_HOUSE: [0, 2, 4, 11, 13],
+  SMALL_STRAIGHT: [0, 4, 8, 12],
+  LARGE_STRAIGHT: [0, 4, 7, 10, 14],
+  YACHT: [0, 2, 7, 12, 14],
+};
+
 const ROLL_PRESENTATION_MS = 780;
 
 interface CombinationAlert {
@@ -702,10 +711,22 @@ function PipFace({ value, compact = false }: { value: DieValue | null; compact?:
 
 function CategoryLabel({ category }: { category: ScoreCategory }): ReactElement {
   const face = upperFaces[category];
+  const glyph = lowerCategoryGlyphs[category];
   return (
     <span className="category-label">
       <span aria-hidden="true" className={face ? "category-symbol upper" : "category-symbol lower"}>
-        {face ? <PipFace compact value={face} /> : categoryLabels[category].slice(0, 1)}
+        {face ? (
+          <PipFace compact value={face} />
+        ) : (
+          <span className="category-mark-grid">
+            {glyph?.map((position) => (
+              <i
+                key={position}
+                style={{ gridColumn: position % 5 + 1, gridRow: Math.floor(position / 5) + 1 }}
+              />
+            ))}
+          </span>
+        )}
       </span>
       {categoryLabels[category]}
     </span>
@@ -938,7 +959,7 @@ function ScoreSheet({
           <small>{game.phase === "FINISHED" ? "점수표가 최종 결과입니다" : "예상 점수를 눌러 기록"}</small>
         </div>
         <div className="score-turn">
-          <span>TURN</span>
+          <span>Turn</span>
           <strong>{game.round}<small>/12</small></strong>
         </div>
       </div>
