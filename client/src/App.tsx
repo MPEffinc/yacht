@@ -6,7 +6,8 @@ import {
   type FormEvent,
   type ReactElement,
 } from "react";
-import type { PublicRoomSnapshot, ServerMessage } from "./protocol";
+import { GameBoard } from "./GameBoard";
+import type { PublicRoomSnapshot, ScoreCategory, ServerMessage } from "./protocol";
 
 const BASE_PATH = "/yacht/";
 const WEBSOCKET_PATH = `${BASE_PATH}ws`;
@@ -143,6 +144,10 @@ export function App(): ReactElement {
           localStorage.removeItem(sessionKey(message.roomId));
           setBusy(false);
           goHome();
+          break;
+        case "GAME_ABORTED":
+          setBusy(false);
+          setError(message.message);
           break;
         case "ERROR": {
           setBusy(false);
@@ -290,6 +295,44 @@ export function App(): ReactElement {
     setBusy(send({ event: "START_GAME", requestId: requestId() }));
   }
 
+  function rollDice(): void {
+    if (!room) return;
+    setError(null);
+    setBusy(
+      send({
+        event: "ROLL_DICE",
+        requestId: requestId(),
+        expectedRevision: room.revision,
+      }),
+    );
+  }
+
+  function setHeldDice(heldIndices: number[]): void {
+    if (!room) return;
+    setError(null);
+    setBusy(
+      send({
+        event: "SET_HELD_DICE",
+        requestId: requestId(),
+        expectedRevision: room.revision,
+        heldIndices,
+      }),
+    );
+  }
+
+  function scoreCategory(category: ScoreCategory): void {
+    if (!room) return;
+    setError(null);
+    setBusy(
+      send({
+        event: "SCORE_CATEGORY",
+        requestId: requestId(),
+        expectedRevision: room.revision,
+        category,
+      }),
+    );
+  }
+
   async function copyInvite(): Promise<void> {
     if (!room) return;
     const url = `${window.location.origin}${BASE_PATH}r/${room.id}`;
@@ -366,6 +409,24 @@ export function App(): ReactElement {
   if (route.view === "ROOM" && room) {
     const self = room.players.find((player) => player.id === selfPlayerId) ?? null;
     const isHost = self?.id === room.hostPlayerId;
+    if (room.status === "STARTED" && room.game) {
+      return (
+        <Shell banner={connectionBanner}>
+          <>
+            <ErrorNotice message={error} />
+            <GameBoard
+              busy={busy}
+              onLeave={leaveRoom}
+              onRoll={rollDice}
+              onScore={scoreCategory}
+              onSetHeld={setHeldDice}
+              room={room}
+              selfPlayerId={selfPlayerId}
+            />
+          </>
+        </Shell>
+      );
+    }
     return (
       <Shell banner={connectionBanner}>
         <section className="room-layout">
@@ -379,17 +440,7 @@ export function App(): ReactElement {
             </button>
           </div>
 
-          {room.status === "STARTED" ? (
-            <div className="started-panel" role="status">
-              <div className="started-icon">⚄</div>
-              <div>
-                <p className="eyebrow">LOBBY COMPLETE</p>
-                <h2>게임 시작 준비 완료</h2>
-                <p>Phase 2에서 Yacht 게임이 연결됩니다.</p>
-              </div>
-            </div>
-          ) : (
-            <div className="card players-card">
+          <div className="card players-card">
               <div className="section-title">
                 <div>
                   <h2>플레이어</h2>
@@ -418,8 +469,7 @@ export function App(): ReactElement {
                   </li>
                 ))}
               </ul>
-            </div>
-          )}
+          </div>
 
           <ErrorNotice message={error} />
           <div className="room-actions">
@@ -453,7 +503,7 @@ export function App(): ReactElement {
         <div className="hero">
           <p className="eyebrow">ROLL TOGETHER</p>
           <h1>Yacht<br /><span>Dice</span></h1>
-          <p>친구들과 함께하는 실시간 Yacht Dice.<br />지금은 멀티플레이 로비를 먼저 준비했습니다.</p>
+          <p>친구들과 함께 Roll하고 Hold하고,<br />12개 점수판을 완성해 Yacht에 도전하세요.</p>
           <div className="dice-row" aria-hidden="true"><span>⚁</span><span>⚄</span><span>⚅</span></div>
         </div>
         <div className="card home-card">
@@ -517,7 +567,7 @@ function Shell({
           <span className="brand-die">⚄</span>
           <span><strong>YACHT DICE</strong><small>ONLINE</small></span>
         </a>
-        <span className="phase-badge">PHASE 1</span>
+        <span className="phase-badge">PHASE 2</span>
       </header>
       <main>{children}</main>
       <footer>Yacht Dice Online · Multiplayer lobby foundation</footer>

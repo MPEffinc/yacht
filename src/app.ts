@@ -7,6 +7,7 @@ import {
 } from "node:http";
 import { resolve, sep } from "node:path";
 import { WebSocket, WebSocketServer } from "ws";
+import { YachtGameError } from "./game/game.js";
 import {
   clientMessageSchema,
   makeErrorMessage,
@@ -217,6 +218,25 @@ export function createYachtApplication(
     }
   }
 
+  function broadcastGameAborted(roomId: string): void {
+    const room = roomService.getRoom(roomId);
+    if (!room) return;
+    const message: ServerMessage = {
+      event: "GAME_ABORTED",
+      message:
+        "플레이어가 게임에서 나가 현재 게임이 종료되었습니다. 다시 Ready 후 시작할 수 있습니다.",
+    };
+    for (const player of room.players.values()) {
+      const socket = playerSockets.get(player.id);
+      if (socket) sendMessage(socket, message);
+    }
+  }
+
+  function sendRoomView(socket: WebSocket, roomId: string): void {
+    if (!roomService.getRoom(roomId)) return;
+    sendMessage(socket, { event: "ROOM_VIEW", room: roomService.getSnapshot(roomId) });
+  }
+
   function scheduleExpiry(
     roomId: string,
     playerId: string,
@@ -231,7 +251,10 @@ export function createYachtApplication(
         reconnectDeadline,
         Date.now(),
       );
-      if (removal?.room) broadcastRoom(roomId);
+      if (removal?.room) {
+        if (removal.gameAborted) broadcastGameAborted(roomId);
+        broadcastRoom(roomId);
+      }
     }, Math.max(0, reconnectDeadline - Date.now()) + 5);
     timer.unref();
     expiryTimers.set(playerId, timer);
@@ -311,7 +334,10 @@ export function createYachtApplication(
             requestId: message.requestId,
             roomId: binding.roomId,
           });
-          if (result.room) broadcastRoom(binding.roomId);
+          if (result.room) {
+            if (result.gameAborted) broadcastGameAborted(binding.roomId);
+            broadcastRoom(binding.roomId);
+          }
           break;
         }
         case "SET_READY": {
@@ -336,10 +362,63 @@ export function createYachtApplication(
           broadcastRoom(binding.roomId);
           break;
         }
+        case "ROLL_DICE": {
+          const binding = requireBinding(context);
+          roomService.rollDice(
+            binding.roomId,
+            binding.playerId,
+            message.expectedRevision,
+          );
+          sendMessage(socket, {
+            event: "COMMAND_OK",
+            requestId: message.requestId,
+            command: message.event,
+          });
+          broadcastRoom(binding.roomId);
+          break;
+        }
+        case "SET_HELD_DICE": {
+          const binding = requireBinding(context);
+          roomService.setHeldDice(
+            binding.roomId,
+            binding.playerId,
+            message.expectedRevision,
+            message.heldIndices,
+          );
+          sendMessage(socket, {
+            event: "COMMAND_OK",
+            requestId: message.requestId,
+            command: message.event,
+          });
+          broadcastRoom(binding.roomId);
+          break;
+        }
+        case "SCORE_CATEGORY": {
+          const binding = requireBinding(context);
+          roomService.scoreCategory(
+            binding.roomId,
+            binding.playerId,
+            message.expectedRevision,
+            message.category,
+          );
+          sendMessage(socket, {
+            event: "COMMAND_OK",
+            requestId: message.requestId,
+            command: message.event,
+          });
+          broadcastRoom(binding.roomId);
+          break;
+        }
       }
     } catch (error) {
-      const code = error instanceof RoomError ? error.code : "INVALID_MESSAGE";
+      const code =
+        error instanceof RoomError || error instanceof YachtGameError
+          ? error.code
+          : "INVALID_MESSAGE";
       sendMessage(socket, makeErrorMessage(code, message.requestId));
+      if (code === "STALE_REVISION" && context.binding) {
+        sendRoomView(socket, context.binding.roomId);
+      }
     }
   }
 

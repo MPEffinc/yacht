@@ -1,4 +1,9 @@
 import { z } from "zod";
+import {
+  SCORE_CATEGORIES,
+  type GameErrorCode,
+  type PublicGameSnapshot,
+} from "./game/types.js";
 
 export const ROOM_ID_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
 export const ROOM_ID_LENGTH = 8;
@@ -14,6 +19,11 @@ const sessionTokenSchema = z
   .min(32)
   .max(128)
   .regex(/^[A-Za-z0-9_-]+$/);
+const expectedRevisionSchema = z.number().int().min(1).max(Number.MAX_SAFE_INTEGER);
+const heldIndicesSchema = z
+  .array(z.number().int().min(0).max(4))
+  .max(5)
+  .refine((indices) => new Set(indices).size === indices.length, "Held indices must be unique");
 
 export const clientMessageSchema = z.discriminatedUnion("event", [
   z
@@ -65,6 +75,29 @@ export const clientMessageSchema = z.discriminatedUnion("event", [
       requestId: requestIdSchema,
     })
     .strict(),
+  z
+    .object({
+      event: z.literal("ROLL_DICE"),
+      requestId: requestIdSchema,
+      expectedRevision: expectedRevisionSchema,
+    })
+    .strict(),
+  z
+    .object({
+      event: z.literal("SET_HELD_DICE"),
+      requestId: requestIdSchema,
+      expectedRevision: expectedRevisionSchema,
+      heldIndices: heldIndicesSchema,
+    })
+    .strict(),
+  z
+    .object({
+      event: z.literal("SCORE_CATEGORY"),
+      requestId: requestIdSchema,
+      expectedRevision: expectedRevisionSchema,
+      category: z.enum(SCORE_CATEGORIES),
+    })
+    .strict(),
 ]);
 
 export type ClientMessage = z.infer<typeof clientMessageSchema>;
@@ -90,6 +123,7 @@ export interface PublicRoomSnapshot {
   maxPlayers: number;
   canStart: boolean;
   players: PublicPlayer[];
+  game: PublicGameSnapshot | null;
 }
 
 export type RoomErrorCode =
@@ -102,7 +136,9 @@ export type RoomErrorCode =
   | "NOT_HOST"
   | "NOT_ENOUGH_PLAYERS"
   | "PLAYERS_NOT_READY"
-  | "GAME_ALREADY_STARTED";
+  | "GAME_ALREADY_STARTED"
+  | "STALE_REVISION"
+  | GameErrorCode;
 
 const errorMessages: Record<RoomErrorCode, string> = {
   INVALID_MESSAGE: "요청 형식이 올바르지 않습니다.",
@@ -115,6 +151,14 @@ const errorMessages: Record<RoomErrorCode, string> = {
   NOT_ENOUGH_PLAYERS: "게임을 시작하려면 최소 2명이 필요합니다.",
   PLAYERS_NOT_READY: "모든 플레이어가 접속하고 Ready 상태여야 합니다.",
   GAME_ALREADY_STARTED: "이미 시작된 방에는 새로 참가할 수 없습니다.",
+  STALE_REVISION: "게임 상태가 변경되었습니다. 최신 상태로 다시 시도해 주세요.",
+  GAME_NOT_STARTED: "아직 게임이 시작되지 않았습니다.",
+  GAME_FINISHED: "이미 종료된 게임입니다.",
+  NOT_YOUR_TURN: "현재 플레이어의 차례가 아닙니다.",
+  MUST_ROLL_FIRST: "먼저 주사위를 굴려 주세요.",
+  NO_ROLLS_LEFT: "이번 턴의 주사위 굴리기를 모두 사용했습니다.",
+  CATEGORY_ALREADY_USED: "이미 기록한 점수 항목입니다.",
+  INVALID_HOLD: "Hold할 주사위 선택이 올바르지 않습니다.",
 };
 
 export type ServerMessage =
@@ -129,8 +173,18 @@ export type ServerMessage =
       reconnected: boolean;
     }
   | { event: "ROOM_VIEW"; room: PublicRoomSnapshot }
-  | { event: "COMMAND_OK"; requestId: string; command: "SET_READY" | "START_GAME" }
+  | {
+      event: "COMMAND_OK";
+      requestId: string;
+      command:
+        | "SET_READY"
+        | "START_GAME"
+        | "ROLL_DICE"
+        | "SET_HELD_DICE"
+        | "SCORE_CATEGORY";
+    }
   | { event: "LEFT"; requestId: string; roomId: string }
+  | { event: "GAME_ABORTED"; message: string }
   | {
       event: "ERROR";
       code: RoomErrorCode;

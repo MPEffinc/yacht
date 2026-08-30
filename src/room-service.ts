@@ -1,5 +1,18 @@
 import { randomBytes, randomInt, randomUUID } from "node:crypto";
 import {
+  cryptoDieRoller,
+  initializeYachtGame,
+  rollGameDice,
+  scoreGameCategory,
+  setGameHeldDice,
+  toPublicGameSnapshot,
+} from "./game/game.js";
+import type {
+  DieRoller,
+  ScoreCategory,
+  YachtGameState,
+} from "./game/types.js";
+import {
   ROOM_ID_ALPHABET,
   ROOM_ID_LENGTH,
   type ConnectionState,
@@ -40,6 +53,7 @@ export interface RoomRecord {
   maxPlayers: number;
   nextJoinOrder: number;
   players: Map<string, PlayerRecord>;
+  game: YachtGameState | null;
 }
 
 export interface RoomServiceOptions {
@@ -47,6 +61,7 @@ export interface RoomServiceOptions {
   roomIdFactory?: () => string;
   playerIdFactory?: () => string;
   sessionTokenFactory?: () => string;
+  dieRoller?: DieRoller;
 }
 
 export interface JoinResult {
@@ -57,6 +72,7 @@ export interface JoinResult {
 export interface RemovalResult {
   room: RoomRecord | null;
   removedPlayer: PlayerRecord;
+  gameAborted: boolean;
 }
 
 function generateRoomId(): string {
@@ -87,6 +103,7 @@ export class RoomService {
   private readonly roomIdFactory: () => string;
   private readonly playerIdFactory: () => string;
   private readonly sessionTokenFactory: () => string;
+  private readonly dieRoller: DieRoller;
   private readonly rooms = new Map<string, RoomRecord>();
 
   constructor(options: RoomServiceOptions = {}) {
@@ -94,6 +111,7 @@ export class RoomService {
     this.roomIdFactory = options.roomIdFactory ?? generateRoomId;
     this.playerIdFactory = options.playerIdFactory ?? randomUUID;
     this.sessionTokenFactory = options.sessionTokenFactory ?? generateSessionToken;
+    this.dieRoller = options.dieRoller ?? cryptoDieRoller;
   }
 
   get roomCount(): number {
@@ -119,6 +137,7 @@ export class RoomService {
       maxPlayers,
       nextJoinOrder: 2,
       players: new Map([[host.id, host]]),
+      game: null,
     };
     this.rooms.set(room.id, room);
     return { room, player: host };
@@ -188,6 +207,43 @@ export class RoomService {
       throw new RoomError("PLAYERS_NOT_READY");
     }
     room.status = "STARTED";
+    room.game = initializeYachtGame(
+      players.sort((left, right) => left.joinOrder - right.joinOrder).map((player) => player.id),
+    );
+    this.bump(room);
+    return room;
+  }
+
+  rollDice(
+    roomId: string,
+    playerId: string,
+    expectedRevision: number,
+  ): RoomRecord {
+    const room = this.requireGameRoom(roomId, playerId, expectedRevision);
+    rollGameDice(room.game!, playerId, this.dieRoller);
+    this.bump(room);
+    return room;
+  }
+
+  setHeldDice(
+    roomId: string,
+    playerId: string,
+    expectedRevision: number,
+    heldIndices: readonly number[],
+  ): RoomRecord {
+    const room = this.requireGameRoom(roomId, playerId, expectedRevision);
+    if (setGameHeldDice(room.game!, playerId, heldIndices)) this.bump(room);
+    return room;
+  }
+
+  scoreCategory(
+    roomId: string,
+    playerId: string,
+    expectedRevision: number,
+    category: ScoreCategory,
+  ): RoomRecord {
+    const room = this.requireGameRoom(roomId, playerId, expectedRevision);
+    scoreGameCategory(room.game!, playerId, category);
     this.bump(room);
     return room;
   }
@@ -277,8 +333,21 @@ export class RoomService {
     return player;
   }
 
+  private requireGameRoom(
+    roomId: string,
+    playerId: string,
+    expectedRevision: number,
+  ): RoomRecord {
+    const room = this.requireRoom(roomId);
+    this.requirePlayer(room, playerId);
+    if (room.revision !== expectedRevision) throw new RoomError("STALE_REVISION");
+    if (room.status !== "STARTED" || !room.game) throw new RoomError("GAME_NOT_STARTED");
+    return room;
+  }
+
   private removePlayer(room: RoomRecord, playerId: string): RemovalResult {
     const player = this.requirePlayer(room, playerId);
+    const wasStarted = room.status === "STARTED";
     room.players.delete(playerId);
     if (room.hostPlayerId === playerId) {
       room.hostPlayerId = this.selectNextHost(room)?.id ?? null;
@@ -286,9 +355,14 @@ export class RoomService {
     this.bump(room);
     if (room.players.size === 0) {
       this.rooms.delete(room.id);
-      return { room: null, removedPlayer: player };
+      return { room: null, removedPlayer: player, gameAborted: wasStarted };
     }
-    return { room, removedPlayer: player };
+    if (wasStarted) {
+      room.status = "LOBBY";
+      room.game = null;
+      for (const remainingPlayer of room.players.values()) remainingPlayer.ready = false;
+    }
+    return { room, removedPlayer: player, gameAborted: wasStarted };
   }
 
   private selectNextHost(room: RoomRecord): PlayerRecord | undefined {
@@ -327,6 +401,7 @@ export class RoomService {
         joinOrder: player.joinOrder,
         isHost: player.id === room.hostPlayerId,
       })),
+      game: room.game ? toPublicGameSnapshot(room.game) : null,
     };
   }
 }
