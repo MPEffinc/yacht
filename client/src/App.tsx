@@ -12,6 +12,14 @@ import type { PublicRoomSnapshot, ScoreCategory, ServerMessage } from "./protoco
 const BASE_PATH = "/yacht/";
 const WEBSOCKET_PATH = `${BASE_PATH}ws`;
 const ROOM_ID_PATTERN = /^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{8}$/;
+const DECORATIVE_DIE_PIPS: Record<number, number[]> = {
+  1: [4],
+  2: [0, 8],
+  3: [0, 4, 8],
+  4: [0, 2, 6, 8],
+  5: [0, 2, 4, 6, 8],
+  6: [0, 2, 3, 5, 6, 8],
+};
 
 type View = "HOME" | "JOIN" | "CONNECTING" | "ROOM" | "NOT_FOUND";
 type ConnectionStatus = "CONNECTING" | "CONNECTED" | "RECONNECTING";
@@ -407,7 +415,7 @@ export function App(): ReactElement {
     return (
       <Shell banner={connectionBanner}>
         <section className="card centered loading-card">
-          <div className="dice-loader" aria-hidden="true">⚄</div>
+          <DecorativeDie className="dice-loader" value={5} />
           <h1>RECONNECTING TO TABLE</h1>
           <p className="muted">CHECKING YOUR SAVED SESSION.</p>
           {error && <ErrorNotice message={error} />}
@@ -546,7 +554,11 @@ export function App(): ReactElement {
           <p className="eyebrow">ROLL TOGETHER</p>
           <h1>Yacht<br /><span>Dice</span></h1>
           <p>ROLL, KEEP, AND SCORE TOGETHER.<br />COMPLETE ALL 12 CATEGORIES AND CLAIM THE YACHT.</p>
-          <div className="dice-row" aria-hidden="true"><span>⚁</span><span>⚄</span><span>⚅</span></div>
+          <div className="dice-row" aria-hidden="true">
+            <DecorativeDie value={2} />
+            <DecorativeDie value={5} />
+            <DecorativeDie value={6} />
+          </div>
         </div>
         <div className="card home-card">
           <form onSubmit={createRoom}>
@@ -606,7 +618,7 @@ function Shell({
       {banner}
       <header>
         <a className="brand" href={BASE_PATH}>
-          <span className="brand-die">⚄</span>
+          <DecorativeDie className="brand-die" value={5} />
           <span><strong>YACHT DICE</strong><small>ONLINE</small></span>
         </a>
         <span className="phase-badge">LIVE TABLE</span>
@@ -614,6 +626,22 @@ function Shell({
       <main>{children}</main>
       <footer>Yacht Dice Online · Server-authoritative tabletop play</footer>
     </div>
+  );
+}
+
+function DecorativeDie({
+  className = "",
+  value,
+}: {
+  className?: string;
+  value: number;
+}): ReactElement {
+  return (
+    <span className={`lobby-die ${className}`.trim()} aria-hidden="true">
+      {DECORATIVE_DIE_PIPS[value].map((position) => (
+        <i className={`lobby-pip lobby-pip-${position}`} key={position} />
+      ))}
+    </span>
   );
 }
 
