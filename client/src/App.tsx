@@ -6,6 +6,7 @@ import {
   type FormEvent,
   type ReactElement,
 } from "react";
+import { AudioControls, AudioDirector } from "./audio-director";
 import { GameBoard } from "./GameBoard";
 import type { PublicRoomSnapshot, ScoreCategory, ServerMessage } from "./protocol";
 
@@ -90,6 +91,7 @@ export function App(): ReactElement {
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<NoticeState | null>(null);
   const [copied, setCopied] = useState(false);
+  const [serverRejectId, setServerRejectId] = useState<string | null>(null);
 
   const socketRef = useRef<WebSocket | null>(null);
   const routeRef = useRef(route);
@@ -97,6 +99,7 @@ export function App(): ReactElement {
   const retryTimerRef = useRef<number | null>(null);
   const noticeTimerRef = useRef<number | null>(null);
   const wasDisconnectedRef = useRef(false);
+  const rejectSequenceRef = useRef(0);
 
   const showNotice = useCallback((message: string, kind: NoticeState["kind"] = "info"): void => {
     if (noticeTimerRef.current !== null) window.clearTimeout(noticeTimerRef.current);
@@ -177,6 +180,8 @@ export function App(): ReactElement {
           showNotice(message.message, "warning");
           break;
         case "ERROR": {
+          rejectSequenceRef.current += 1;
+          setServerRejectId(`${message.requestId ?? "server"}:${message.code}:${rejectSequenceRef.current}`);
           if (message.code === "STALE_REVISION") {
             setError(null);
             showNotice("SYNCED TO THE LATEST GAME STATE.");
@@ -398,21 +403,27 @@ export function App(): ReactElement {
       {connection === "CONNECTING" ? "CONNECTING TO SERVER..." : "CONNECTION LOST · RECONNECTING..."}
     </div>
   );
+  const withAudio = (content: ReactElement): ReactElement => (
+    <>
+      <AudioDirector room={room} selfPlayerId={selfPlayerId} serverRejectId={serverRejectId} />
+      {content}
+    </>
+  );
 
   if (route.view === "NOT_FOUND") {
-    return (
+    return withAudio(
       <Shell banner={connectionBanner}>
         <section className="card centered">
           <p className="eyebrow">404</p>
           <h1>INVALID INVITE LINK</h1>
           <a className="button primary" href={BASE_PATH}>RETURN HOME</a>
         </section>
-      </Shell>
+      </Shell>,
     );
   }
 
   if (route.view === "CONNECTING") {
-    return (
+    return withAudio(
       <Shell banner={connectionBanner}>
         <section className="card centered loading-card">
           <DecorativeDie className="dice-loader" value={5} />
@@ -420,12 +431,12 @@ export function App(): ReactElement {
           <p className="muted">CHECKING YOUR SAVED SESSION.</p>
           {error && <ErrorNotice message={error} />}
         </section>
-      </Shell>
+      </Shell>,
     );
   }
 
   if (route.view === "JOIN" && route.roomId) {
-    return (
+    return withAudio(
       <Shell banner={connectionBanner}>
         <section className="card join-card">
           <p className="eyebrow">YACHT DICE INVITE</p>
@@ -449,7 +460,7 @@ export function App(): ReactElement {
             </button>
           </form>
         </section>
-      </Shell>
+      </Shell>,
     );
   }
 
@@ -457,7 +468,7 @@ export function App(): ReactElement {
     const self = room.players.find((player) => player.id === selfPlayerId) ?? null;
     const isHost = self?.id === room.hostPlayerId;
     if (room.status === "STARTED" && room.game) {
-      return (
+      return withAudio(
         <div className="game-app">
           {connectionBanner}
           <ErrorNotice message={error} />
@@ -473,10 +484,10 @@ export function App(): ReactElement {
             room={room}
             selfPlayerId={selfPlayerId}
           />
-        </div>
+        </div>,
       );
     }
-    return (
+    return withAudio(
       <Shell banner={connectionBanner}>
         <section className="room-layout">
           <div className="room-heading">
@@ -524,13 +535,14 @@ export function App(): ReactElement {
           <TransientNotice notice={notice} />
           <div className="room-actions">
             {room.status === "LOBBY" && !isHost && (
-              <button className="button primary" type="button" onClick={toggleReady} disabled={busy}>
+              <button className="button primary" data-audio-no-click type="button" onClick={toggleReady} disabled={busy}>
                 {self?.ready ? "CANCEL READY" : "READY"}
               </button>
             )}
             {room.status === "LOBBY" && isHost && (
               <button
                 className="button accent"
+                data-audio-no-click
                 type="button"
                 onClick={startGame}
                 disabled={busy || !room.canStart}
@@ -543,11 +555,11 @@ export function App(): ReactElement {
             </button>
           </div>
         </section>
-      </Shell>
+      </Shell>,
     );
   }
 
-  return (
+  return withAudio(
     <Shell banner={connectionBanner}>
       <section className="home-grid">
         <div className="hero">
@@ -602,7 +614,7 @@ export function App(): ReactElement {
           <ErrorNotice message={error} />
         </div>
       </section>
-    </Shell>
+    </Shell>,
   );
 }
 
@@ -621,7 +633,10 @@ function Shell({
           <DecorativeDie className="brand-die" value={5} />
           <span><strong>YACHT DICE</strong><small>ONLINE</small></span>
         </a>
-        <span className="phase-badge">LIVE TABLE</span>
+        <div className="shell-controls">
+          <span className="phase-badge">LIVE TABLE</span>
+          <AudioControls />
+        </div>
       </header>
       <main>{children}</main>
       <footer>Yacht Dice Online · Server-authoritative tabletop play</footer>

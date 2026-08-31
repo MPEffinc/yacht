@@ -7,6 +7,7 @@ import {
   type ReactElement,
   type RefObject,
 } from "react";
+import { AudioControls } from "./audio-director";
 import {
   LOWER_CATEGORIES,
   UPPER_CATEGORIES,
@@ -525,7 +526,7 @@ export function GameBoard({
               onClick={() => setMobileScoreOpen(false)}
               type="button"
             >
-              <span aria-hidden="true">⌄</span> CLOSE SCORE SHEET
+              <span aria-hidden="true">⌄</span> CLOSE
             </button>
             <ScoreSheet
               busy={inputLocked}
@@ -605,6 +606,7 @@ export function GameBoard({
             <div className="tray-control-rim">
               <button
                 className="roll-again-button"
+                data-audio-no-click
                 disabled={!canRoll}
                 onClick={onRoll}
                 type="button"
@@ -800,6 +802,7 @@ function TableControls({
           </strong>
           <b aria-hidden="true">{controlsOpen ? "CLOSE" : "MENU"}</b>
         </button>
+        <AudioControls variant="plaque" />
         <button
           aria-label="Leave room"
           className="table-quick-leave"

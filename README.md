@@ -26,7 +26,8 @@ Room과 세션은 메모리에만 유지되므로 서버 프로세스가 재시�
 ```text
 src/                 HTTP, WebSocket, protocol, RoomService
 src/game/            Yacht types, pure scoring, game state machine
-client/src/          React lobby, GameBoard, score board, browser protocol type
+client/src/          React lobby, GameBoard, score board, browser protocol 및 audio director
+client/src/audio/    Vite가 fingerprint하는 Yacht BGM/Dice/System audio assets
 tests/               scoring/game/RoomService 및 실제 WebSocket 통합 테스트
 deploy/nginx/        Nginx location 설정 예시
 Dockerfile           multi-stage production image
@@ -138,6 +139,12 @@ Roll 결과는 항상 server-authoritative snapshot으로 먼저 확정되며, �
 
 경기 종료 후 Host가 `RETURN_TO_LOBBY`를 보내면 같은 room/player/session을 유지한 채 모든 Ready만 초기화합니다. 각 플레이어가 다시 Ready하고 Host가 `START_GAME`을 실행해야 새 점수표와 주사위 상태로 재경기가 시작됩니다.
 
+## Audio
+
+브라우저 오디오는 Web Audio API 기반이며 첫 `pointerdown` 또는 `keydown`에서 Safari/iOS 호환 silent-buffer 방식으로 unlock합니다. Home/Join/Lobby는 lobby BGM, Playing은 main BGM을 loop하며 게임 시작 때 crossfade하고 결과 화면에서는 BGM을 낮춘 뒤 플레이어별 victory/loss cue를 재생합니다.
+
+Roll sound는 로컬 버튼 클릭이 아니라 authoritative `ROOM_VIEW`의 `rollsUsed` 증가를 관찰하므로 모든 플레이어가 함께 듣습니다. 3개의 shake와 3개의 throw sample을 직전 sample과 겹치지 않게 presentation-only random으로 선택하며, reconnect의 첫 snapshot은 baseline으로만 사용해 이전 Roll이나 Turn cue를 재생하지 않습니다. 우측 상단 Audio 설정에서 BGM/SFX 볼륨과 mute를 조절할 수 있고 `yacht.audio.preferences.v1`에 저장됩니다.
+
 ## Docker
 
 ```bash
@@ -183,4 +190,4 @@ Phase 2는 crypto Roll, Hold, 12개 category scoring, +35 upper bonus, score pre
 
 Phase 3는 authoritative Roll animation presentation, 점수/퇴장 확인 dialog, 턴 전환 안내, all-KEEP 보호, reconnect/stale revision UX, 정상 종료 lifecycle 보정과 같은 방 Lobby를 재사용하는 동의 기반 rematch를 포함합니다.
 
-현재 범위에는 AI, spectator, chat, account, database, match history, leaderboard, custom rules, sound 및 3D dice가 포함되지 않습니다.
+현재 범위에는 AI, spectator, chat, account, database, match history, leaderboard, custom rules 및 3D dice가 포함되지 않습니다.
