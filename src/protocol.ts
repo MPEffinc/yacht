@@ -42,6 +42,13 @@ export const clientMessageSchema = z.discriminatedUnion("event", [
     .strict(),
   z
     .object({
+      event: z.literal("CREATE_BOT_GAME"),
+      requestId: requestIdSchema,
+      nickname: nicknameSchema,
+    })
+    .strict(),
+  z
+    .object({
       event: z.literal("JOIN_ROOM"),
       requestId: requestIdSchema,
       roomId: roomIdSchema,
@@ -105,15 +112,25 @@ export const clientMessageSchema = z.discriminatedUnion("event", [
       expectedRevision: expectedRevisionSchema,
     })
     .strict(),
+  z
+    .object({
+      event: z.literal("REMATCH_BOT_GAME"),
+      requestId: requestIdSchema,
+      expectedRevision: expectedRevisionSchema,
+    })
+    .strict(),
 ]);
 
 export type ClientMessage = z.infer<typeof clientMessageSchema>;
 export type RoomStatus = "LOBBY" | "STARTED";
+export type RoomMode = "MULTIPLAYER" | "BOT";
+export type PlayerKind = "HUMAN" | "BOT";
 export type ConnectionState = "CONNECTED" | "DISCONNECTED_GRACE";
 
 export interface PublicPlayer {
   id: string;
   nickname: string;
+  kind: PlayerKind;
   ready: boolean;
   connectionState: ConnectionState;
   joinOrder: number;
@@ -122,6 +139,7 @@ export interface PublicPlayer {
 
 export interface PublicRoomSnapshot {
   id: string;
+  mode: RoomMode;
   revision: number;
   status: RoomStatus;
   createdAt: string;
@@ -137,6 +155,7 @@ export type RoomErrorCode =
   | "INVALID_MESSAGE"
   | "INVALID_NICKNAME"
   | "ROOM_NOT_FOUND"
+  | "ROOM_NOT_JOINABLE"
   | "ROOM_FULL"
   | "DUPLICATE_NICKNAME"
   | "INVALID_SESSION"
@@ -152,6 +171,7 @@ const errorMessages: Record<RoomErrorCode, string> = {
   INVALID_MESSAGE: "THE REQUEST FORMAT IS INVALID.",
   INVALID_NICKNAME: "ENTER A NICKNAME BETWEEN 1 AND 20 CHARACTERS.",
   ROOM_NOT_FOUND: "THIS ROOM DOES NOT EXIST.",
+  ROOM_NOT_JOINABLE: "THIS IS A PRIVATE BOT TABLE.",
   ROOM_FULL: "THIS ROOM IS FULL.",
   DUPLICATE_NICKNAME: "THAT NICKNAME IS ALREADY IN USE.",
   INVALID_SESSION: "THIS SESSION IS INVALID. PLEASE JOIN AGAIN.",
@@ -192,7 +212,8 @@ export type ServerMessage =
         | "ROLL_DICE"
         | "SET_HELD_DICE"
         | "SCORE_CATEGORY"
-        | "RETURN_TO_LOBBY";
+        | "RETURN_TO_LOBBY"
+        | "REMATCH_BOT_GAME";
     }
   | { event: "LEFT"; requestId: string; roomId: string }
   | { event: "GAME_ABORTED"; message: string }

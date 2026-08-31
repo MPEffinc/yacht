@@ -342,6 +342,27 @@ input::placeholder { color: #8c8a80; }
   .physical-die.rolling, .turn-transition, .transient-notice { animation: none !important; }
 }
 
+.bot-play-button {
+  min-height: 62px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  color: #fff5d8;
+  background: linear-gradient(160deg, #4a493f, #171715 72%);
+  border-color: #9b7a2d;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.12), 0 4px 0 #080807, 0 9px 16px rgba(33,19,7,.3);
+  font-size: 1.03rem;
+  letter-spacing: .08em;
+}
+.bot-play-button span { color: #d9bc69; font-size: .53rem; font-weight: 800; letter-spacing: .18em; }
+.bot-play-button:hover:not(:disabled) { border-color: #e0bd58; background: linear-gradient(160deg, #5b594b, #1d1c19 72%); }
+.bot-divider { margin: 8px 0 0; }
+.bot-badge { flex: 0 0 auto; padding: 2px 4px; color: #f8e7b2; background: #403b31; border: 1px solid #75654a; border-radius: 2px; font-size: .43rem; font-weight: 900; letter-spacing: .1em; line-height: 1; }
+.score-table .bot-player-name-line { display: grid; grid-template-columns: 1fr; justify-items: center; row-gap: 3px; line-height: 1; overflow: visible; }
+.score-table .bot-player-name-line .current-player-marker { position: absolute; left: 7px; }
+.score-table .bot-player-name-line .player-name-text { width: 100%; font-size: .72rem; overflow: visible; }
+.result-bot-badge { display: inline-block; margin-left: 7px; vertical-align: middle; }
+
 /* Gameplay is the table itself: the ordinary site shell intentionally ends here. */
 .game-app {
   position: relative;

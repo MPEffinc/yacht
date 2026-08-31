@@ -190,6 +190,7 @@ interface GameBoardProps {
   onSetHeld: (indices: number[]) => void;
   onScore: (category: ScoreCategory) => void;
   onLeave: () => void;
+  onRematchBot: () => void;
   onReturnToLobby: () => void;
 }
 
@@ -208,6 +209,7 @@ export function GameBoard({
   onSetHeld,
   onScore,
   onLeave,
+  onRematchBot,
   onReturnToLobby,
 }: GameBoardProps): ReactElement {
   const game = room.game!;
@@ -346,7 +348,9 @@ export function GameBoard({
     if (isTurnTransition) {
       const message = game.currentPlayerId === selfPlayerId
         ? "YOUR TURN"
-        : `${room.players.find((player) => player.id === game.currentPlayerId)?.nickname ?? "PLAYER"} · TURN`;
+        : room.players.find((player) => player.id === game.currentPlayerId)?.kind === "BOT"
+          ? "YACHT BOT · THINKING..."
+          : `${room.players.find((player) => player.id === game.currentPlayerId)?.nickname ?? "PLAYER"} · TURN`;
       if (turnTimerRef.current !== null) window.clearTimeout(turnTimerRef.current);
       setTurnTransition(message);
       turnTimerRef.current = window.setTimeout(() => {
@@ -507,6 +511,7 @@ export function GameBoard({
     .map((playerId) => ({
       playerId,
       nickname: playersById.get(playerId)?.nickname ?? "Unknown",
+      kind: playersById.get(playerId)?.kind ?? "HUMAN",
       total: game.scoreCards[playerId]?.total ?? 0,
     }))
     .sort((left, right) => right.total - left.total);
@@ -536,6 +541,7 @@ export function GameBoard({
             setLeaveDialogOpen(false);
           }}
           roomId={room.id}
+          roomMode={room.mode}
         />
 
         <div
@@ -660,7 +666,9 @@ export function GameBoard({
                       ? "PRESS A DIE TO KEEP"
                       : isMyTurn
                         ? "ROLL TO BEGIN"
-                        : "WAITING FOR OPPONENT"}
+                        : currentPlayer?.kind === "BOT"
+                          ? "YACHT BOT · THINKING..."
+                          : "WAITING FOR OPPONENT"}
               </p>
             </div>
           </section>
@@ -681,6 +689,8 @@ export function GameBoard({
             <ResultPanel
               busy={busy}
               isHost={room.hostPlayerId === selfPlayerId}
+              isBotMode={room.mode === "BOT"}
+              onRematchBot={onRematchBot}
               onReturnToLobby={onReturnToLobby}
               standings={standings}
               winnerPlayerIds={game.winnerPlayerIds}
@@ -789,6 +799,7 @@ function CategoryLabel({ category }: { category: ScoreCategory }): ReactElement 
 
 function TableControls({
   roomId,
+  roomMode,
   connected,
   busy,
   controlsOpen,
@@ -802,6 +813,7 @@ function TableControls({
   onConfirmLeave,
 }: {
   roomId: string;
+  roomMode: PublicRoomSnapshot["mode"];
   connected: boolean;
   busy: boolean;
   controlsOpen: boolean;
@@ -824,7 +836,7 @@ function TableControls({
           onClick={onToggle}
           type="button"
         >
-          <span>{roomId}</span>
+          <span>{roomMode === "BOT" ? "SOLO TABLE · BOT" : roomId}</span>
           <strong className={connected ? "network-online" : "network-offline"}>
             {connected ? "ONLINE" : "RECONNECTING"} <i aria-hidden="true" />
           </strong>
@@ -846,7 +858,7 @@ function TableControls({
         <div className="table-controls-shelf" id="table-controls-shelf">
           <div className="shelf-heading">
             <span>TABLE MENU</span>
-            <strong>{roomId}</strong>
+            <strong>{roomMode === "BOT" ? "SOLO TABLE" : roomId}</strong>
           </div>
           <div className="shelf-status">
             <span>NETWORK</span>
@@ -854,10 +866,10 @@ function TableControls({
               {connected ? "ONLINE" : "RECONNECTING"} <i aria-hidden="true" />
             </strong>
           </div>
-          <button className="shelf-action" onClick={onCopyInvite} type="button">
+          {roomMode === "MULTIPLAYER" && <button className="shelf-action" onClick={onCopyInvite} type="button">
             {copyFeedback === "COPIED" ? "INVITE LINK COPIED" : "COPY INVITE LINK"}
-          </button>
-          {copyFeedback === "ERROR" && (
+          </button>}
+          {roomMode === "MULTIPLAYER" && copyFeedback === "ERROR" && (
             <p className="shelf-feedback" role="status">COPY /yacht/r/{roomId} MANUALLY.</p>
           )}
 
@@ -866,8 +878,12 @@ function TableControls({
               <strong>LEAVE THIS TABLE?</strong>
               <p>
                 {gamePhase === "PLAYING"
-                  ? "LEAVING ENDS THE GAME AND RETURNS EVERYONE TO THE LOBBY."
-                  : "THE REMAINING PLAYERS WILL RETURN TO THE LOBBY."}
+                  ? roomMode === "BOT"
+                    ? "LEAVING ENDS THIS SOLO MATCH."
+                    : "LEAVING ENDS THE GAME AND RETURNS EVERYONE TO THE LOBBY."
+                  : roomMode === "BOT"
+                    ? "LEAVING CLOSES THIS SOLO TABLE."
+                    : "THE REMAINING PLAYERS WILL RETURN TO THE LOBBY."}
               </p>
               <div>
                 <button autoFocus onClick={onCancelLeave} type="button">CANCEL</button>
@@ -1030,9 +1046,10 @@ function ScoreSheet({
                     scope="col"
                   >
                     {current && turnTransition && <span className="score-turn-note">{turnTransition}</span>}
-                    <span className="player-name-line">
+                    <span className={playersById.get(playerId)?.kind === "BOT" ? "player-name-line bot-player-name-line" : "player-name-line"}>
                       {current && <i aria-hidden="true" className="current-player-marker" />}
                       <span className="player-name-text">{playersById.get(playerId)?.nickname ?? "Unknown"}</span>
+                      {playersById.get(playerId)?.kind === "BOT" && <b className="bot-badge">BOT</b>}
                     </span>
                     {(self || current || winner) && (
                       <small>
@@ -1123,13 +1140,17 @@ function ResultPanel({
   standings,
   winnerPlayerIds,
   isHost,
+  isBotMode,
   busy,
+  onRematchBot,
   onReturnToLobby,
 }: {
-  standings: Array<{ playerId: string; nickname: string; total: number }>;
+  standings: Array<{ playerId: string; nickname: string; kind: "HUMAN" | "BOT"; total: number }>;
   winnerPlayerIds: string[];
   isHost: boolean;
+  isBotMode: boolean;
   busy: boolean;
+  onRematchBot: () => void;
   onReturnToLobby: () => void;
 }): ReactElement {
   const winners = standings.filter((entry) => winnerPlayerIds.includes(entry.playerId));
@@ -1146,14 +1167,27 @@ function ResultPanel({
           return (
             <li className={winner ? "winner" : ""} key={entry.playerId}>
               <span>#{rank}</span>
-              <strong>{winner && "★ "}{entry.nickname}</strong>
+              <strong>{winner && "★ "}{entry.nickname}{entry.kind === "BOT" && <span className="bot-badge result-bot-badge">BOT</span>}</strong>
               <b>{entry.total}</b>
             </li>
           );
         })}
       </ol>
       <div className="rematch-actions">
-        {isHost ? (
+        {isBotMode ? (
+          <>
+            <button
+              className="rematch-button"
+              data-action="rematch-bot-game"
+              disabled={busy}
+              onClick={onRematchBot}
+              type="button"
+            >
+              PLAY AGAIN
+            </button>
+            <p>START A FRESH MATCH AGAINST YACHT BOT.</p>
+          </>
+        ) : isHost ? (
           <>
             <button
               className="rematch-button"

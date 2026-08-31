@@ -1,6 +1,6 @@
 # Yacht Dice Online
 
-Yacht Dice Online의 Phase 0~3 구현입니다. `/yacht/` 하위 경로에서 2~6명이 로비를 만들고 실제 Yacht Dice `RULESET_V1` 게임을 끝까지 반복 플레이할 수 있습니다. 주사위, 점수, 턴, 승자는 모두 서버가 결정합니다.
+Yacht Dice Online의 서버 권위형 구현입니다. `/yacht/` 하위 경로에서 2~6명이 로비를 만들거나, Lobby 없이 즉시 1 Human vs 1 Normal BOT 게임을 시작할 수 있습니다. 주사위, 점수, 턴, 승자는 모두 서버가 결정합니다.
 
 ## Architecture
 
@@ -26,6 +26,7 @@ Room과 세션은 메모리에만 유지되므로 서버 프로세스가 재시�
 ```text
 src/                 HTTP, WebSocket, protocol, RoomService
 src/game/            Yacht types, pure scoring, game state machine
+src/bot/             Monte Carlo 정책, simulation RNG, BOT turn controller
 client/src/          React lobby, GameBoard, score board, browser protocol 및 audio director
 client/src/audio/    Vite가 fingerprint하는 Yacht BGM/Dice/System audio assets
 tests/               scoring/game/RoomService 및 실제 WebSocket 통합 테스트
@@ -63,6 +64,7 @@ WebSocket client command:
 ```text
 DIAGNOSTIC_PING
 CREATE_ROOM
+CREATE_BOT_GAME
 JOIN_ROOM
 RECONNECT_ROOM
 LEAVE_ROOM
@@ -71,6 +73,8 @@ START_GAME
 ROLL_DICE
 SET_HELD_DICE
 SCORE_CATEGORY
+RETURN_TO_LOBBY
+REMATCH_BOT_GAME
 ```
 
 주요 server event는 `SESSION_ESTABLISHED`, `ROOM_VIEW`, `COMMAND_OK`, `GAME_ABORTED`, `LEFT`, `ERROR`, `DIAGNOSTIC_PONG`입니다. 모든 client message는 Zod strict schema로 검증됩니다. 게임 명령은 최신 `ROOM_VIEW.revision`을 `expectedRevision`으로 보내며 stale 명령은 거절 후 최신 snapshot으로 resync됩니다.
@@ -128,6 +132,14 @@ START_GAME → 초기 dice(null) → ROLL_DICE
 ```
 
 Production dice는 Node `crypto.randomInt(1, 7)`을 사용하며 테스트에서는 deterministic roller를 주입합니다.
+
+## 1P vs BOT
+
+HOME의 `PLAY VS BOT`은 `CREATE_BOT_GAME` 한 번으로 내부 2인 room과 게임을 만들고 바로 GameBoard를 엽니다. `YACHT BOT`은 WebSocket이나 session token이 없는 server-owned virtual player이며 Host가 되거나 다른 사용자를 받지 않습니다. Human refresh/reconnect 동안 현재 게임은 그대로 보존되고, Human 연결이 끊긴 동안 BOT turn은 정지합니다. Human이 명시적으로 나가거나 grace가 만료되면 BOT room 전체를 삭제합니다.
+
+Normal BOT은 실제 결과와 분리된 simulation PRNG로 31개의 합법적인 KEEP mask를 각각 192회 Monte Carlo 평가합니다. 점수 utility는 raw score, upper bonus와 달성 가능성, 남은 category 수에 따른 sacrifice cost, 낮은 Choice reserve를 포함합니다. 실제 Roll/KEEP/Score는 Human과 똑같이 `RoomService.rollDice`, `setHeldDice`, `scoreCategory`를 거치므로 production dice는 계속 crypto RNG가 결정합니다.
+
+BOT action에는 turn 시작 700ms, Roll 뒤 1300ms, KEEP 뒤 550ms, Score 전 850ms delay가 있어 기존 주사위·KEEP·조합·점수 기록 연출과 오디오가 끝날 시간을 확보합니다. 종료 후 `REMATCH_BOT_GAME`은 room/player/session ID를 보존하면서 Lobby 없이 새 게임을 만들고 Human부터 시작합니다.
 
 ## Disconnect policy
 
@@ -192,4 +204,4 @@ Phase 2는 crypto Roll, Hold, 12개 category scoring, +35 upper bonus, score pre
 
 Phase 3는 authoritative Roll animation presentation, 점수/퇴장 확인 dialog, 턴 전환 안내, all-KEEP 보호, reconnect/stale revision UX, 정상 종료 lifecycle 보정과 같은 방 Lobby를 재사용하는 동의 기반 rematch를 포함합니다.
 
-현재 범위에는 AI, spectator, chat, account, database, match history, leaderboard, custom rules 및 3D dice가 포함되지 않습니다.
+현재 범위에는 Normal BOT 한 명을 제외한 난이도 선택/다중 BOT, spectator, chat, account, database, match history, leaderboard, custom rules 및 3D dice가 포함되지 않습니다.

@@ -34,6 +34,66 @@ function createTwoPlayerRoom(): {
 }
 
 describe("RoomService", () => {
+  it("creates an immediate private Human vs BOT game with no bot session", () => {
+    const service = new RoomService();
+    const created = service.createBotGame("Solo");
+    const snapshot = service.getSnapshot(created.room.id);
+    expect(snapshot).toMatchObject({
+      mode: "BOT",
+      status: "STARTED",
+      maxPlayers: 2,
+      hostPlayerId: created.player.id,
+      game: { phase: "PLAYING", currentPlayerId: created.player.id },
+    });
+    expect(snapshot.players.map((player) => player.kind)).toEqual(["HUMAN", "BOT"]);
+    const bot = [...created.room.players.values()].find((player) => player.kind === "BOT")!;
+    expect(bot.sessionToken).toBeNull();
+    expect(bot.id).not.toBe(created.room.hostPlayerId);
+    expectRoomError(
+      () => service.reconnectRoom(created.room.id, "x".repeat(43)),
+      "INVALID_SESSION",
+    );
+    expectRoomError(() => service.joinRoom(created.room.id, "Intruder"), "ROOM_NOT_JOINABLE");
+  });
+
+  it("deletes the whole BOT room when its human leaves or expires", () => {
+    const service = new RoomService({ reconnectGraceMs: 10 });
+    const left = service.createBotGame("Leaving");
+    expect(service.leaveRoom(left.room.id, left.player.id).room).toBeNull();
+    expect(service.getRoom(left.room.id)).toBeUndefined();
+
+    const expired = service.createBotGame("Expired");
+    const disconnected = service.markDisconnected(expired.room.id, expired.player.id, 100)!;
+    expect(
+      service.expireDisconnected(expired.room.id, expired.player.id, disconnected.reconnectDeadline, 110)?.room,
+    ).toBeNull();
+    expect(service.getRoom(expired.room.id)).toBeUndefined();
+  });
+
+  it("rematches a finished BOT game in place with the human first", () => {
+    const service = new RoomService();
+    const created = service.createBotGame("Again");
+    const originalIds = [...created.room.players.keys()];
+    const originalToken = created.player.sessionToken;
+    created.room.game!.phase = "FINISHED";
+    created.room.game!.currentPlayerId = null;
+    created.room.game!.completedTurns = 24;
+    created.room.game!.winnerPlayerIds = [created.player.id];
+    const rematched = service.rematchBotGame(
+      created.room.id,
+      created.player.id,
+      created.room.revision,
+    );
+    expect([...rematched.players.keys()]).toEqual(originalIds);
+    expect(rematched.players.get(created.player.id)?.sessionToken).toBe(originalToken);
+    expect(rematched.game).toMatchObject({
+      phase: "PLAYING",
+      currentPlayerId: created.player.id,
+      completedTurns: 0,
+      rollsUsed: 0,
+    });
+  });
+
   it("creates a room with secure identifiers and an authoritative host", () => {
     const service = new RoomService();
     const roomIds = new Set<string>();

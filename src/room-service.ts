@@ -17,7 +17,9 @@ import {
   ROOM_ID_LENGTH,
   type ConnectionState,
   type PublicRoomSnapshot,
+  type PlayerKind,
   type RoomErrorCode,
+  type RoomMode,
   type RoomStatus,
 } from "./protocol.js";
 
@@ -37,7 +39,8 @@ export interface PlayerRecord {
   id: string;
   nickname: string;
   nicknameKey: string;
-  sessionToken: string;
+  kind: PlayerKind;
+  sessionToken: string | null;
   ready: boolean;
   connectionState: ConnectionState;
   reconnectDeadline: number | null;
@@ -46,6 +49,7 @@ export interface PlayerRecord {
 
 export interface RoomRecord {
   id: string;
+  mode: RoomMode;
   revision: number;
   status: RoomStatus;
   createdAt: number;
@@ -130,6 +134,7 @@ export class RoomService {
     const host = this.createPlayer(nickname, nicknameKey, 1);
     const room: RoomRecord = {
       id: this.createUniqueRoomId(),
+      mode: "MULTIPLAYER",
       revision: 1,
       status: "LOBBY",
       createdAt: now,
@@ -143,8 +148,32 @@ export class RoomService {
     return { room, player: host };
   }
 
+  createBotGame(rawNickname: string, now = Date.now()): JoinResult {
+    const { nickname, nicknameKey } = normalizeNickname(rawNickname);
+    const human = this.createPlayer(nickname, nicknameKey, 1);
+    const bot = this.createPlayer("YACHT BOT", "yacht bot", 2, "BOT");
+    const room: RoomRecord = {
+      id: this.createUniqueRoomId(),
+      mode: "BOT",
+      revision: 1,
+      status: "STARTED",
+      createdAt: now,
+      hostPlayerId: human.id,
+      maxPlayers: 2,
+      nextJoinOrder: 3,
+      players: new Map([
+        [human.id, human],
+        [bot.id, bot],
+      ]),
+      game: initializeYachtGame([human.id, bot.id]),
+    };
+    this.rooms.set(room.id, room);
+    return { room, player: human };
+  }
+
   joinRoom(roomId: string, rawNickname: string): JoinResult {
     const room = this.requireRoom(roomId);
+    if (room.mode === "BOT") throw new RoomError("ROOM_NOT_JOINABLE");
     if (room.status === "STARTED") throw new RoomError("GAME_ALREADY_STARTED");
     const { nickname, nicknameKey } = normalizeNickname(rawNickname);
     if ([...room.players.values()].some((player) => player.nicknameKey === nicknameKey)) {
@@ -162,7 +191,7 @@ export class RoomService {
   reconnectRoom(roomId: string, sessionToken: string, now = Date.now()): JoinResult {
     const room = this.requireRoom(roomId);
     const player = [...room.players.values()].find(
-      (candidate) => candidate.sessionToken === sessionToken,
+      (candidate) => candidate.kind === "HUMAN" && candidate.sessionToken === sessionToken,
     );
     if (!player) throw new RoomError("INVALID_SESSION");
 
@@ -197,6 +226,7 @@ export class RoomService {
 
   startGame(roomId: string, playerId: string): RoomRecord {
     const room = this.requireRoom(roomId);
+    if (room.mode === "BOT") throw new RoomError("GAME_ALREADY_STARTED");
     this.requirePlayer(room, playerId);
     if (room.hostPlayerId !== playerId) throw new RoomError("NOT_HOST");
     if (room.status === "STARTED") throw new RoomError("GAME_ALREADY_STARTED");
@@ -257,6 +287,7 @@ export class RoomService {
     expectedRevision: number,
   ): RoomRecord {
     const room = this.requireRoom(roomId);
+    if (room.mode === "BOT") throw new RoomError("ROOM_NOT_JOINABLE");
     this.requirePlayer(room, playerId);
     if (room.revision !== expectedRevision) throw new RoomError("STALE_REVISION");
     if (room.hostPlayerId !== playerId) throw new RoomError("NOT_HOST");
@@ -269,6 +300,28 @@ export class RoomService {
     return room;
   }
 
+  rematchBotGame(
+    roomId: string,
+    playerId: string,
+    expectedRevision: number,
+  ): RoomRecord {
+    const room = this.requireRoom(roomId);
+    const player = this.requirePlayer(room, playerId);
+    if (room.mode !== "BOT" || player.kind !== "HUMAN") {
+      throw new RoomError("INVALID_SESSION");
+    }
+    if (room.revision !== expectedRevision) throw new RoomError("STALE_REVISION");
+    if (room.hostPlayerId !== playerId) throw new RoomError("NOT_HOST");
+    if (room.status !== "STARTED" || !room.game) throw new RoomError("GAME_NOT_STARTED");
+    if (room.game.phase !== "FINISHED") throw new RoomError("GAME_NOT_FINISHED");
+    const playerOrder = [...room.players.values()]
+      .sort((left, right) => left.joinOrder - right.joinOrder)
+      .map((candidate) => candidate.id);
+    room.game = initializeYachtGame(playerOrder);
+    this.bump(room);
+    return room;
+  }
+
   markDisconnected(
     roomId: string,
     playerId: string,
@@ -276,7 +329,12 @@ export class RoomService {
   ): { room: RoomRecord; reconnectDeadline: number } | null {
     const room = this.rooms.get(roomId);
     const player = room?.players.get(playerId);
-    if (!room || !player || player.connectionState === "DISCONNECTED_GRACE") return null;
+    if (
+      !room ||
+      !player ||
+      player.kind !== "HUMAN" ||
+      player.connectionState === "DISCONNECTED_GRACE"
+    ) return null;
     const reconnectDeadline = now + this.reconnectGraceMs;
     player.connectionState = "DISCONNECTED_GRACE";
     player.reconnectDeadline = reconnectDeadline;
@@ -329,12 +387,14 @@ export class RoomService {
     nickname: string,
     nicknameKey: string,
     joinOrder: number,
+    kind: PlayerKind = "HUMAN",
   ): PlayerRecord {
     return {
       id: this.playerIdFactory(),
       nickname,
       nicknameKey,
-      sessionToken: this.sessionTokenFactory(),
+      kind,
+      sessionToken: kind === "HUMAN" ? this.sessionTokenFactory() : null,
       ready: false,
       connectionState: "CONNECTED",
       reconnectDeadline: null,
@@ -370,6 +430,11 @@ export class RoomService {
     const player = this.requirePlayer(room, playerId);
     const wasActivelyPlaying = room.status === "STARTED" && room.game?.phase === "PLAYING";
     const hadGame = room.status === "STARTED" && room.game !== null;
+    if (room.mode === "BOT") {
+      if (player.kind !== "HUMAN") throw new RoomError("INVALID_SESSION");
+      this.rooms.delete(room.id);
+      return { room: null, removedPlayer: player, gameAborted: wasActivelyPlaying };
+    }
     room.players.delete(playerId);
     if (room.hostPlayerId === playerId) {
       room.hostPlayerId = this.selectNextHost(room)?.id ?? null;
@@ -389,7 +454,7 @@ export class RoomService {
 
   private selectNextHost(room: RoomRecord): PlayerRecord | undefined {
     return [...room.players.values()]
-      .filter((player) => player.connectionState === "CONNECTED")
+      .filter((player) => player.kind === "HUMAN" && player.connectionState === "CONNECTED")
       .sort((left, right) => left.joinOrder - right.joinOrder)[0];
   }
 
@@ -403,6 +468,7 @@ export class RoomService {
     );
     return {
       id: room.id,
+      mode: room.mode,
       revision: room.revision,
       status: room.status,
       createdAt: new Date(room.createdAt).toISOString(),
@@ -410,6 +476,7 @@ export class RoomService {
       minPlayers: MIN_PLAYERS,
       maxPlayers: room.maxPlayers,
       canStart:
+        room.mode === "MULTIPLAYER" &&
         room.status === "LOBBY" &&
         players.length >= MIN_PLAYERS &&
         players.every((player) => player.connectionState === "CONNECTED") &&
@@ -417,6 +484,7 @@ export class RoomService {
       players: players.map((player) => ({
         id: player.id,
         nickname: player.nickname,
+        kind: player.kind,
         ready: player.ready,
         connectionState: player.connectionState,
         joinOrder: player.joinOrder,

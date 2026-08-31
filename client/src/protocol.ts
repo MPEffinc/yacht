@@ -1,4 +1,6 @@
 export type RoomStatus = "LOBBY" | "STARTED";
+export type RoomMode = "MULTIPLAYER" | "BOT";
+export type PlayerKind = "HUMAN" | "BOT";
 export type ConnectionState = "CONNECTED" | "DISCONNECTED_GRACE";
 export const UPPER_CATEGORIES = [
   "ONES",
@@ -49,6 +51,7 @@ export interface PublicGameSnapshot {
 export interface PublicPlayer {
   id: string;
   nickname: string;
+  kind: PlayerKind;
   ready: boolean;
   connectionState: ConnectionState;
   joinOrder: number;
@@ -57,6 +60,7 @@ export interface PublicPlayer {
 
 export interface PublicRoomSnapshot {
   id: string;
+  mode: RoomMode;
   revision: number;
   status: RoomStatus;
   createdAt: string;
@@ -89,7 +93,8 @@ export type ServerMessage =
         | "ROLL_DICE"
         | "SET_HELD_DICE"
         | "SCORE_CATEGORY"
-        | "RETURN_TO_LOBBY";
+        | "RETURN_TO_LOBBY"
+        | "REMATCH_BOT_GAME";
     }
   | { event: "LEFT"; requestId: string; roomId: string }
   | { event: "GAME_ABORTED"; message: string }

@@ -36,6 +36,19 @@ export function isGameStartTransition(
   return previous.id === next.id && previous.status === "LOBBY" && next.status === "STARTED";
 }
 
+export function isBotRematchTransition(
+  previous: PublicRoomSnapshot,
+  next: PublicRoomSnapshot,
+): boolean {
+  return previous.id === next.id
+    && previous.mode === "BOT"
+    && next.mode === "BOT"
+    && previous.game?.phase === "FINISHED"
+    && next.game?.phase === "PLAYING"
+    && next.game.completedTurns === 0
+    && next.game.rollsUsed === 0;
+}
+
 export function joinedPlayerIds(
   previous: PublicRoomSnapshot,
   next: PublicRoomSnapshot,

@@ -7,6 +7,7 @@ import {
 } from "node:http";
 import { resolve, sep } from "node:path";
 import { WebSocket, WebSocketServer } from "ws";
+import { BotController } from "./bot/bot-controller.js";
 import { YachtGameError } from "./game/game.js";
 import {
   clientMessageSchema,
@@ -218,6 +219,8 @@ export function createYachtApplication(
     }
   }
 
+  const botController = new BotController({ roomService, broadcastRoom });
+
   function broadcastGameAborted(roomId: string): void {
     const room = roomService.getRoom(roomId);
     if (!room) return;
@@ -254,6 +257,9 @@ export function createYachtApplication(
       if (removal?.room) {
         if (removal.gameAborted) broadcastGameAborted(roomId);
         broadcastRoom(roomId);
+        botController.scheduleIfNeeded(roomId);
+      } else if (removal) {
+        botController.cancelRoom(roomId);
       }
     }, Math.max(0, reconnectDeadline - Date.now()) + 5);
     timer.unref();
@@ -267,6 +273,7 @@ export function createYachtApplication(
     requestId: string,
     reconnected: boolean,
   ): void {
+    if (!result.player.sessionToken) throw new RoomError("INVALID_SESSION");
     const oldSocket = playerSockets.get(result.player.id);
     if (oldSocket && oldSocket !== socket) {
       const oldContext = socketContexts.get(oldSocket);
@@ -309,6 +316,14 @@ export function createYachtApplication(
           broadcastRoom(result.room.id);
           break;
         }
+        case "CREATE_BOT_GAME": {
+          if (context.binding) throw new RoomError("INVALID_SESSION");
+          const result = roomService.createBotGame(message.nickname);
+          bindSession(socket, context, result, message.requestId, false);
+          broadcastRoom(result.room.id);
+          botController.scheduleIfNeeded(result.room.id);
+          break;
+        }
         case "JOIN_ROOM": {
           if (context.binding) throw new RoomError("INVALID_SESSION");
           const result = roomService.joinRoom(message.roomId, message.nickname);
@@ -321,6 +336,7 @@ export function createYachtApplication(
           const result = roomService.reconnectRoom(message.roomId, message.sessionToken);
           bindSession(socket, context, result, message.requestId, true);
           broadcastRoom(result.room.id);
+          botController.scheduleIfNeeded(result.room.id);
           break;
         }
         case "LEAVE_ROOM": {
@@ -337,6 +353,9 @@ export function createYachtApplication(
           if (result.room) {
             if (result.gameAborted) broadcastGameAborted(binding.roomId);
             broadcastRoom(binding.roomId);
+            botController.scheduleIfNeeded(binding.roomId);
+          } else {
+            botController.cancelRoom(binding.roomId);
           }
           break;
         }
@@ -402,6 +421,23 @@ export function createYachtApplication(
             message.category,
           );
           broadcastRoom(binding.roomId);
+          botController.scheduleIfNeeded(binding.roomId);
+          sendMessage(socket, {
+            event: "COMMAND_OK",
+            requestId: message.requestId,
+            command: message.event,
+          });
+          break;
+        }
+        case "REMATCH_BOT_GAME": {
+          const binding = requireBinding(context);
+          roomService.rematchBotGame(
+            binding.roomId,
+            binding.playerId,
+            message.expectedRevision,
+          );
+          broadcastRoom(binding.roomId);
+          botController.scheduleIfNeeded(binding.roomId);
           sendMessage(socket, {
             event: "COMMAND_OK",
             requestId: message.requestId,
@@ -471,6 +507,7 @@ export function createYachtApplication(
       const result = roomService.markDisconnected(binding.roomId, binding.playerId);
       if (!result) return;
       broadcastRoom(binding.roomId);
+      botController.scheduleIfNeeded(binding.roomId);
       scheduleExpiry(binding.roomId, binding.playerId, result.reconnectDeadline);
     });
     socket.on("error", () => {
@@ -518,6 +555,7 @@ export function createYachtApplication(
     },
     async close() {
       closing = true;
+      botController.cancelAll();
       clearInterval(heartbeatTimer);
       for (const timer of expiryTimers.values()) clearTimeout(timer);
       expiryTimers.clear();

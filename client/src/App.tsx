@@ -288,6 +288,19 @@ export function App(): ReactElement {
     );
   }
 
+  function playVsBot(): void {
+    const normalizedNickname = requireNickname();
+    if (!normalizedNickname) return;
+    setError(null);
+    setBusy(
+      send({
+        event: "CREATE_BOT_GAME",
+        requestId: requestId(),
+        nickname: normalizedNickname,
+      }),
+    );
+  }
+
   function joinRoom(roomId: string, event?: FormEvent): void {
     event?.preventDefault();
     const normalizedRoomId = normalizeRoomId(roomId);
@@ -392,6 +405,18 @@ export function App(): ReactElement {
     );
   }
 
+  function rematchBotGame(): void {
+    if (!room) return;
+    setError(null);
+    setBusy(
+      send({
+        event: "REMATCH_BOT_GAME",
+        requestId: requestId(),
+        expectedRevision: room.revision,
+      }),
+    );
+  }
+
   async function copyInvite(): Promise<void> {
     if (!room) return;
     const url = `${window.location.origin}${BASE_PATH}r/${room.id}`;
@@ -489,6 +514,7 @@ export function App(): ReactElement {
             busy={busy || connection !== "CONNECTED"}
             connected={connection === "CONNECTED"}
             onLeave={leaveRoom}
+            onRematchBot={rematchBotGame}
             onReturnToLobby={returnToLobby}
             onRoll={rollDice}
             onScore={scoreCategory}
@@ -598,6 +624,17 @@ export function App(): ReactElement {
                 onChange={(event) => setNickname(event.target.value)}
               />
             </label>
+            <button
+              className="button bot-play-button"
+              data-audio-no-click
+              type="button"
+              disabled={busy}
+              onClick={playVsBot}
+            >
+              <span>INSTANT SINGLE PLAYER</span>
+              {busy ? "PREPARING TABLE..." : "PLAY VS BOT"}
+            </button>
+            <div className="divider bot-divider"><span>MULTIPLAYER</span></div>
             <label>
               MAX PLAYERS
               <select value={maxPlayers} onChange={(event) => setMaxPlayers(Number(event.target.value))}>
