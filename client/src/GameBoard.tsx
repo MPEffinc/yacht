@@ -212,6 +212,7 @@ export function GameBoard({
   const [pendingScore, setPendingScore] = useState<PendingScore | null>(null);
   const [leaveDialogOpen, setLeaveDialogOpen] = useState(false);
   const [controlsOpen, setControlsOpen] = useState(false);
+  const [mobileScoreOpen, setMobileScoreOpen] = useState(false);
   const [copyFeedback, setCopyFeedback] = useState<"COPIED" | "ERROR" | null>(null);
   const [rollingIndices, setRollingIndices] = useState<number[]>([]);
   const [visualFaces, setVisualFaces] = useState<Partial<Record<number, DieValue>>>({});
@@ -385,11 +386,12 @@ export function GameBoard({
   }, []);
 
   useEffect(() => {
-    if (!pendingScore && !leaveDialogOpen) return;
+    if (!pendingScore && !leaveDialogOpen && !mobileScoreOpen) return;
     const onKeyDown = (event: KeyboardEvent): void => {
       if (event.key === "Escape") {
         if (pendingScore) closeScoreDialog();
-        else setLeaveDialogOpen(false);
+        else if (leaveDialogOpen) setLeaveDialogOpen(false);
+        else setMobileScoreOpen(false);
         return;
       }
       if (event.key !== "Tab" || !pendingScore || !scoreDialogRef.current) return;
@@ -407,7 +409,11 @@ export function GameBoard({
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [leaveDialogOpen, pendingScore]);
+  }, [leaveDialogOpen, mobileScoreOpen, pendingScore]);
+
+  useEffect(() => {
+    if (game.phase === "FINISHED") setMobileScoreOpen(false);
+  }, [game.phase]);
 
   useEffect(() => {
     if (!pendingScore) return;
@@ -479,7 +485,7 @@ export function GameBoard({
 
   return (
     <section className="game-layout" ref={gameBoardRef}>
-      <div className="tabletop-board">
+      <div className={game.phase === "FINISHED" ? "tabletop-board finished" : "tabletop-board"}>
         <TableControls
           busy={busy}
           connected={connected}
@@ -493,7 +499,10 @@ export function GameBoard({
             onLeave();
           }}
           onCopyInvite={() => void copyInvite()}
-          onOpenLeave={() => setLeaveDialogOpen(true)}
+          onOpenLeave={() => {
+            setControlsOpen(true);
+            setLeaveDialogOpen(true);
+          }}
           onToggle={() => {
             setControlsOpen((open) => !open);
             setLeaveDialogOpen(false);
@@ -506,28 +515,31 @@ export function GameBoard({
           data-player-count={game.playerOrder.length}
           style={{ "--player-count": game.playerOrder.length } as CSSProperties}
         >
-          <ScoreSheet
-            busy={inputLocked}
-            isMyTurn={isMyTurn}
-            onConfirmScore={selectScore}
-            pendingScore={pendingScore}
-            playersById={playersById}
-            room={room}
-            selfPlayerId={selfPlayerId}
-            turnTransition={turnTransition}
-          />
+          <div
+            className={mobileScoreOpen ? "score-sheet-stage open" : "score-sheet-stage"}
+            id="mobile-score-sheet"
+          >
+            <button
+              aria-label="Close score sheet"
+              className="mobile-score-close"
+              onClick={() => setMobileScoreOpen(false)}
+              type="button"
+            >
+              <span aria-hidden="true">⌄</span> CLOSE SCORE SHEET
+            </button>
+            <ScoreSheet
+              busy={inputLocked}
+              isMyTurn={isMyTurn}
+              onConfirmScore={selectScore}
+              pendingScore={pendingScore}
+              playersById={playersById}
+              room={room}
+              selfPlayerId={selfPlayerId}
+              turnTransition={turnTransition}
+            />
+          </div>
 
           <section className={game.phase === "FINISHED" ? "dice-station finished" : "dice-station"} aria-label="Dice tray">
-            {game.phase === "FINISHED" && (
-              <ResultPanel
-                busy={busy}
-                isHost={room.hostPlayerId === selfPlayerId}
-                onReturnToLobby={onReturnToLobby}
-                standings={standings}
-                winnerPlayerIds={game.winnerPlayerIds}
-              />
-            )}
-
             <div className="dice-tray">
               <div className="keep-zone">
                 <div className="keep-slots">
@@ -622,7 +634,29 @@ export function GameBoard({
               </p>
             </div>
           </section>
+          <button
+            aria-controls="mobile-score-sheet"
+            aria-expanded={mobileScoreOpen}
+            className="mobile-score-toggle"
+            onClick={() => setMobileScoreOpen(true)}
+            type="button"
+          >
+            <span>SCORE SHEET</span>
+            <strong>VIEW SCORES</strong>
+            <i aria-hidden="true">⌃</i>
+          </button>
         </div>
+        {game.phase === "FINISHED" && (
+          <div className="result-backdrop">
+            <ResultPanel
+              busy={busy}
+              isHost={room.hostPlayerId === selfPlayerId}
+              onReturnToLobby={onReturnToLobby}
+              standings={standings}
+              winnerPlayerIds={game.winnerPlayerIds}
+            />
+          </div>
+        )}
         {pendingScore && (
           <ScoreConfirmationDialog
             dialogRef={scoreDialogRef}
@@ -752,19 +786,30 @@ function TableControls({
 }): ReactElement {
   return (
     <aside className="table-controls">
-      <button
-        aria-controls="table-controls-shelf"
-        aria-expanded={controlsOpen}
-        className="table-plaque"
-        onClick={onToggle}
-        type="button"
-      >
-        <span>{roomId}</span>
-        <strong className={connected ? "network-online" : "network-offline"}>
-          {connected ? "ONLINE" : "RECONNECTING"} <i aria-hidden="true" />
-        </strong>
-        <b aria-hidden="true">{controlsOpen ? "CLOSE" : "MENU"}</b>
-      </button>
+      <div className="table-plaque-group">
+        <button
+          aria-controls="table-controls-shelf"
+          aria-expanded={controlsOpen}
+          className="table-plaque"
+          onClick={onToggle}
+          type="button"
+        >
+          <span>{roomId}</span>
+          <strong className={connected ? "network-online" : "network-offline"}>
+            {connected ? "ONLINE" : "RECONNECTING"} <i aria-hidden="true" />
+          </strong>
+          <b aria-hidden="true">{controlsOpen ? "CLOSE" : "MENU"}</b>
+        </button>
+        <button
+          aria-label="Leave room"
+          className="table-quick-leave"
+          disabled={busy}
+          onClick={onOpenLeave}
+          type="button"
+        >
+          LEAVE
+        </button>
+      </div>
 
       {controlsOpen && (
         <div className="table-controls-shelf" id="table-controls-shelf">
@@ -1057,7 +1102,7 @@ function ResultPanel({
   const winners = standings.filter((entry) => winnerPlayerIds.includes(entry.playerId));
   const winnerText = winners.map((entry) => entry.nickname).join(" · ");
   return (
-    <aside className="result-panel" aria-label="Final ranking and rematch">
+    <aside aria-label="Final ranking and rematch" aria-modal="true" className="result-panel" role="dialog">
       <p className="result-kicker">{winners.length > 1 ? "TIE WINNERS" : "WINNER"}</p>
       <h2>{winnerText}{winners.length > 1 ? " · TIED WINNERS" : " · WINNER"}</h2>
       <p className="result-final-score">Final score {winners[0]?.total ?? 0}</p>
