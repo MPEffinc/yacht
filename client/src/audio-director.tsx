@@ -16,16 +16,20 @@ import {
   isSelfTurnTransition,
   joinedPlayerIds,
   readyAudioChanges,
+  rollResultAudioAsset,
+  scoreWriteAudioChanges,
 } from "./audio-event-policy";
 import type { PublicRoomSnapshot } from "./protocol";
 
 const HOVER_THROTTLE_MS = 80;
 const DICE_THROW_DELAY_MS = 360;
 const DICE_SHAKE_DURATION_MS = 560;
+const ROLL_RESULT_ALERT_DELAY_MS = 1_000;
 const GAME_MAIN_BGM_DELAY_MS = 420;
 const INITIAL_TURN_CUE_DELAY_MS = 700;
 
 interface AudioDirectorProps {
+  baselineVersion?: number;
   room: PublicRoomSnapshot | null;
   selfPlayerId: string | null;
   serverRejectId?: string | null;
@@ -38,6 +42,7 @@ function interactiveElement(target: EventTarget | null): Element | null {
 
 /** Observes authoritative snapshots and never sends a game command. */
 export function AudioDirector({
+  baselineVersion = 0,
   room,
   selfPlayerId,
   serverRejectId = null,
@@ -46,6 +51,7 @@ export function AudioDirector({
   const initialized = useRef(false);
   const scheduledTimers = useRef(new Set<number>());
   const timerGeneration = useRef(0);
+  const observedBaselineVersion = useRef(baselineVersion);
 
   const schedule = (callback: () => void, delayMs: number): void => {
     const generation = timerGeneration.current;
@@ -132,6 +138,17 @@ export function AudioDirector({
   }, []);
 
   useEffect(() => {
+    if (baselineVersion !== observedBaselineVersion.current) {
+      observedBaselineVersion.current = baselineVersion;
+      cancelScheduled();
+      initialized.current = true;
+      previousRoom.current = room;
+      audioManager.restoreAllBgmDucks(200);
+      const scene = audioScene(room);
+      void audioManager.playBgm(scene === "LOBBY" ? "bgm_lobby" : "bgm_main", { fadeMs: 400 });
+      if (scene === "FINISHED") audioManager.duckBgm("finished", { level: .18, fadeMs: 0 });
+      return;
+    }
     if (!initialized.current) {
       initialized.current = true;
       previousRoom.current = room;
@@ -207,17 +224,34 @@ export function AudioDirector({
 
     if (isRollTransition(previous, room)) {
       const rollKey = `roll:${room.id}:${room.revision}:${room.game!.currentPlayerId}:${room.game!.rollsUsed}`;
-      void audioManager.playRandom("diceShake", {
+      void audioManager.playRandomLayered("diceShake", 2, {
         dedupeKey: `${rollKey}:shake`,
         maxDurationMs: DICE_SHAKE_DURATION_MS,
         fadeOutMs: 120,
       });
       schedule(() => {
-        void audioManager.playRandom("diceThrow", {
+        void audioManager.playRandomLayered("diceThrow", 2, {
           dedupeKey: `${rollKey}:throw`,
           priority: "normal",
         });
       }, DICE_THROW_DELAY_MS);
+      const resultAlert = rollResultAudioAsset(room);
+      if (resultAlert) {
+        schedule(() => {
+          void audioManager.playSfx(resultAlert, {
+            dedupeKey: `${rollKey}:result:${resultAlert}`,
+            priority: resultAlert === "alert_yacht" ? "high" : "normal",
+          });
+        }, ROLL_RESULT_ALERT_DELAY_MS);
+      }
+    }
+
+    for (const scoreWrite of scoreWriteAudioChanges(previous, room)) {
+      const scoreKey = `score-write:${room.id}:${room.revision}:${scoreWrite.playerId}:${scoreWrite.category}`;
+      void audioManager.playLayered(["write_score_alert", "write_score_pencil"], {
+        dedupeKey: scoreKey,
+        priority: "normal",
+      });
     }
 
     if (!gameStarted && isSelfTurnTransition(previous, room, selfPlayerId)) {
@@ -238,7 +272,7 @@ export function AudioDirector({
         });
       }
     }
-  }, [room, selfPlayerId]);
+  }, [baselineVersion, room, selfPlayerId]);
 
   useEffect(() => {
     if (!serverRejectId) return;

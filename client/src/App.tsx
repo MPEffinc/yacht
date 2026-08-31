@@ -92,6 +92,7 @@ export function App(): ReactElement {
   const [notice, setNotice] = useState<NoticeState | null>(null);
   const [copied, setCopied] = useState(false);
   const [serverRejectId, setServerRejectId] = useState<string | null>(null);
+  const [audioBaselineVersion, setAudioBaselineVersion] = useState(0);
 
   const socketRef = useRef<WebSocket | null>(null);
   const routeRef = useRef(route);
@@ -100,6 +101,7 @@ export function App(): ReactElement {
   const noticeTimerRef = useRef<number | null>(null);
   const wasDisconnectedRef = useRef(false);
   const rejectSequenceRef = useRef(0);
+  const audioBaselinePendingRef = useRef(false);
 
   const showNotice = useCallback((message: string, kind: NoticeState["kind"] = "info"): void => {
     if (noticeTimerRef.current !== null) window.clearTimeout(noticeTimerRef.current);
@@ -157,6 +159,7 @@ export function App(): ReactElement {
           localStorage.setItem(sessionKey(message.roomId), message.sessionToken);
           setSelfPlayerId(message.playerId);
           setError(null);
+          audioBaselinePendingRef.current = message.reconnected;
           if (message.reconnected && wasDisconnectedRef.current) {
             showNotice("RECONNECTED TO THE GAME.");
             wasDisconnectedRef.current = false;
@@ -165,6 +168,10 @@ export function App(): ReactElement {
           break;
         case "ROOM_VIEW":
           setRoom(message.room);
+          if (audioBaselinePendingRef.current) {
+            audioBaselinePendingRef.current = false;
+            setAudioBaselineVersion((version) => version + 1);
+          }
           setBusy(false);
           goToRoom(message.room.id, true);
           break;
@@ -405,7 +412,12 @@ export function App(): ReactElement {
   );
   const withAudio = (content: ReactElement): ReactElement => (
     <>
-      <AudioDirector room={room} selfPlayerId={selfPlayerId} serverRejectId={serverRejectId} />
+      <AudioDirector
+        baselineVersion={audioBaselineVersion}
+        room={room}
+        selfPlayerId={selfPlayerId}
+        serverRejectId={serverRejectId}
+      />
       {content}
     </>
   );

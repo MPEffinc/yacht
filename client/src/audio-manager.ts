@@ -129,6 +129,37 @@ export function chooseAudioPoolSample(
   return candidates[index] ?? null;
 }
 
+/** Chooses a unique presentation layer and avoids repeating the same layer set. */
+export function chooseAudioPoolSamples(
+  samples: readonly AudioId[],
+  count: number,
+  previous: readonly AudioId[] | undefined,
+  random = presentationalRandom,
+): AudioId[] {
+  const layerSize = Math.min(samples.length, Math.max(0, Math.floor(count)));
+  if (layerSize === 0) return [];
+  const combinations: AudioId[][] = [];
+  const build = (start: number, selected: AudioId[]): void => {
+    if (selected.length === layerSize) {
+      combinations.push(selected);
+      return;
+    }
+    for (let index = start; index <= samples.length - (layerSize - selected.length); index += 1) {
+      build(index + 1, [...selected, samples[index]!]);
+    }
+  };
+  build(0, []);
+  const previousKey = previous ? [...previous].sort().join("|") : null;
+  const alternatives = combinations.length > 1 && previousKey
+    ? combinations.filter((combination) => [...combination].sort().join("|") !== previousKey)
+    : combinations;
+  const index = Math.min(
+    alternatives.length - 1,
+    Math.floor(clamp(random(), 0, .999999999) * alternatives.length),
+  );
+  return alternatives[index] ?? [];
+}
+
 export class AudioManager {
   private context: AudioContext | null = null;
   private masterGain: GainNode | null = null;
@@ -139,6 +170,7 @@ export class AudioManager {
   private readonly pendingDecodes = new Map<AudioId, Promise<AudioBuffer | null>>();
   private readonly activeSfx = new Set<ActiveSfx>();
   private readonly lastPoolSample = new Map<string, AudioId>();
+  private readonly lastPoolLayer = new Map<string, readonly AudioId[]>();
   private readonly dedupeKeys = new Set<string>();
   private readonly dedupeOrder: string[] = [];
   private readonly duckRequests = new Map<string, number>();
@@ -247,6 +279,72 @@ export class AudioManager {
     }
   }
 
+  /** Loads every layer first, then starts all sources at one AudioContext time. */
+  async playLayered(ids: readonly AudioId[], options: PlayOptions = {}): Promise<AudioId[]> {
+    const uniqueIds = [...new Set(ids)];
+    if (uniqueIds.length === 0 || !this.unlocked || !this.context || !this.masterGain) return [];
+    if (this.preferences.sfxMuted) return [];
+    const assets = uniqueIds.map((id) => AUDIO_ASSETS[id] as AudioAssetDefinition);
+    const category = options.category ?? assets[0]!.category;
+    if (category === "BGM" || assets.some((asset) => asset.category !== category)) return [];
+    const priority = options.priority ?? "normal";
+    if (options.dedupeKey) {
+      const claimed = uniqueIds.every((_, index) => this.claimDedupe(`${options.dedupeKey}:layer:${index}`));
+      if (!claimed) return [];
+    }
+
+    const highIsPlaying = [...this.activeSfx].some((entry) => entry.priority === "high");
+    if (priority === "low" && highIsPlaying) return [];
+    if (priority !== "high" && this.activeSfx.size + uniqueIds.length > MAX_CONCURRENT_SFX) return [];
+
+    const buffers = await Promise.all(uniqueIds.map((id) => this.loadBuffer(id)));
+    if (buffers.some((buffer) => !buffer) || !this.unlocked || !this.context || this.preferences.sfxMuted) return [];
+    if (priority === "high") {
+      this.stopLowPrioritySfx();
+      while (this.activeSfx.size + uniqueIds.length > MAX_CONCURRENT_SFX) this.stopOldestSfx();
+    } else {
+      const highStartedWhileLoading = [...this.activeSfx].some((entry) => entry.priority === "high");
+      if ((priority === "low" && highStartedWhileLoading) || this.activeSfx.size + uniqueIds.length > MAX_CONCURRENT_SFX) return [];
+    }
+
+    const context = this.context;
+    const categoryGain = this.categoryGains.get(category);
+    if (!categoryGain) return [];
+    const startAt = context.currentTime + .012;
+    const started: AudioId[] = [];
+    try {
+      uniqueIds.forEach((id, index) => {
+        const asset = assets[index]!;
+        const buffer = buffers[index]!;
+        const source = context.createBufferSource();
+        const gain = context.createGain();
+        const initialGain = clamp((asset.gain ?? 1) * (options.gain ?? 1), 0, 2);
+        const requestedDuration = options.maxDurationMs === undefined
+          ? buffer.duration
+          : Math.max(0, options.maxDurationMs / 1_000);
+        const duration = Math.min(buffer.duration, requestedDuration);
+        const fadeSeconds = Math.min(duration, Math.max(0, options.fadeOutMs ?? 0) / 1_000);
+        gain.gain.setValueAtTime(initialGain, startAt);
+        if (fadeSeconds > 0) {
+          gain.gain.setValueAtTime(initialGain, startAt + duration - fadeSeconds);
+          gain.gain.linearRampToValueAtTime(0, startAt + duration);
+        }
+        source.buffer = buffer;
+        source.connect(gain);
+        gain.connect(categoryGain);
+        const active: ActiveSfx = { source, priority };
+        this.activeSfx.add(active);
+        source.onended = () => this.activeSfx.delete(active);
+        if (options.maxDurationMs === undefined) source.start(startAt);
+        else source.start(startAt, 0, duration);
+        started.push(id);
+      });
+      return started;
+    } catch {
+      return started;
+    }
+  }
+
   async playRandom(
     pool: AudioPoolId | readonly AudioId[],
     options: PlayOptions = {},
@@ -257,6 +355,19 @@ export class AudioManager {
     if (!selected) return null;
     this.lastPoolSample.set(poolKey, selected);
     return (await this.playSfx(selected, options)) ? selected : null;
+  }
+
+  async playRandomLayered(
+    pool: AudioPoolId | readonly AudioId[],
+    count: number,
+    options: PlayOptions = {},
+  ): Promise<AudioId[]> {
+    const samples = typeof pool === "string" ? AUDIO_POOLS[pool] : pool;
+    const poolKey = typeof pool === "string" ? pool : samples.join("|");
+    const selected = chooseAudioPoolSamples(samples, count, this.lastPoolLayer.get(poolKey));
+    if (selected.length === 0) return [];
+    this.lastPoolLayer.set(poolKey, selected);
+    return this.playLayered(selected, options);
   }
 
   async playBgm(id: BgmId, options: BgmOptions = {}): Promise<boolean> {

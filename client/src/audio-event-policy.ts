@@ -1,4 +1,8 @@
-import type { PublicRoomSnapshot } from "./protocol";
+import {
+  SCORE_CATEGORIES,
+  type PublicRoomSnapshot,
+  type ScoreCategory,
+} from "./protocol";
 
 export type AudioScene = "LOBBY" | "PLAYING" | "FINISHED";
 
@@ -6,6 +10,19 @@ export interface ReadyAudioChange {
   readonly playerId: string;
   readonly ready: boolean;
 }
+
+export interface ScoreWriteAudioChange {
+  readonly playerId: string;
+  readonly category: ScoreCategory;
+  readonly score: number;
+}
+
+const SPECIAL_COMBINATIONS = new Set<ScoreCategory>([
+  "SMALL_STRAIGHT",
+  "LARGE_STRAIGHT",
+  "FULL_HOUSE",
+  "FOUR_OF_A_KIND",
+]);
 
 export function audioScene(room: PublicRoomSnapshot | null): AudioScene {
   if (room?.status !== "STARTED" || !room.game) return "LOBBY";
@@ -56,6 +73,49 @@ export function isRollTransition(
     && previousGame.currentPlayerId !== null
     && previousGame.currentPlayerId === nextGame.currentPlayerId
     && nextGame.rollsUsed === previousGame.rollsUsed + 1;
+}
+
+export function rollResultAudioAsset(
+  room: PublicRoomSnapshot,
+): "alert_normal_combination" | "alert_special_combination" | "alert_yacht" | null {
+  const game = room.game;
+  if (game?.phase !== "PLAYING" || game.rollsUsed < 1) return null;
+  if (game.matchedCombinations.includes("YACHT")) return "alert_yacht";
+  if (game.matchedCombinations.some((category) => SPECIAL_COMBINATIONS.has(category))) {
+    return "alert_special_combination";
+  }
+  return "alert_normal_combination";
+}
+
+export function scoreWriteAudioChanges(
+  previous: PublicRoomSnapshot,
+  next: PublicRoomSnapshot,
+): ScoreWriteAudioChange[] {
+  const previousGame = previous.game;
+  const nextGame = next.game;
+  if (
+    previous.id !== next.id
+    || next.revision <= previous.revision
+    || previous.status !== "STARTED"
+    || next.status !== "STARTED"
+    || previousGame?.phase !== "PLAYING"
+    || !nextGame
+    || nextGame.completedTurns !== previousGame.completedTurns + 1
+  ) return [];
+
+  const changes: ScoreWriteAudioChange[] = [];
+  for (const playerId of nextGame.playerOrder) {
+    const previousScores = previousGame.scoreCards[playerId]?.scores;
+    const nextScores = nextGame.scoreCards[playerId]?.scores;
+    if (!previousScores || !nextScores) continue;
+    for (const category of SCORE_CATEGORIES) {
+      const score = nextScores[category];
+      if (previousScores[category] === null && typeof score === "number") {
+        changes.push({ playerId, category, score });
+      }
+    }
+  }
+  return changes;
 }
 
 export function isSelfTurnTransition(

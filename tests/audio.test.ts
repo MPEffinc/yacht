@@ -15,9 +15,18 @@ import {
   isSelfTurnTransition,
   joinedPlayerIds,
   readyAudioChanges,
+  rollResultAudioAsset,
+  scoreWriteAudioChanges,
 } from "../client/src/audio-event-policy";
-import { chooseAudioPoolSample } from "../client/src/audio-manager";
-import type { PublicGameSnapshot, PublicPlayer, PublicRoomSnapshot } from "../client/src/protocol";
+import { chooseAudioPoolSample, chooseAudioPoolSamples } from "../client/src/audio-manager";
+import {
+  SCORE_CATEGORIES,
+  type PublicGameSnapshot,
+  type PublicPlayer,
+  type PublicRoomSnapshot,
+  type ScoreCard,
+  type ScoreCategory,
+} from "../client/src/protocol";
 
 const audioFiles = [
   "client/src/audio/bgm_lobby.mp3",
@@ -28,6 +37,11 @@ const audioFiles = [
   ]),
   "client/src/audio/system/player_in.ogg",
   "client/src/audio/system/game_start.ogg",
+  "client/src/audio/system/alert_normal_combination.mp3",
+  "client/src/audio/system/alert_special_combination.mp3",
+  "client/src/audio/system/alert_yacht.mp3",
+  "client/src/audio/system/write_score_alert.mp3",
+  "client/src/audio/system/write_score_pencil.mp3",
   "client/src/audio/system/victory.mp3",
   "client/src/audio/system/ui_hovering.ogg",
   "client/src/audio/system/ready_off.ogg",
@@ -67,6 +81,20 @@ function game(overrides: Partial<PublicGameSnapshot> = {}): PublicGameSnapshot {
   };
 }
 
+function scoreCard(overrides: Partial<Record<ScoreCategory, number | null>> = {}) {
+  const scores = Object.fromEntries(
+    SCORE_CATEGORIES.map((category) => [category, overrides[category] ?? null]),
+  ) as ScoreCard;
+  return {
+    scores,
+    upperSubtotal: 0,
+    upperBonus: 0,
+    lowerSubtotal: 0,
+    total: Object.values(scores).reduce<number>((sum, score) => sum + (score ?? 0), 0),
+    completedCategories: Object.values(scores).filter((score) => score !== null).length,
+  };
+}
+
 function room(overrides: Partial<PublicRoomSnapshot> = {}): PublicRoomSnapshot {
   return {
     id: "ABCDEFGH",
@@ -84,9 +112,9 @@ function room(overrides: Partial<PublicRoomSnapshot> = {}): PublicRoomSnapshot {
 }
 
 describe("Yacht audio registry", () => {
-  it("registers only the 18 archived Yacht assets and keeps every source file", () => {
-    expect(Object.keys(AUDIO_ASSETS)).toHaveLength(18);
-    expect(audioFiles).toHaveLength(18);
+  it("registers all 23 archived Yacht assets and keeps every source file", () => {
+    expect(Object.keys(AUDIO_ASSETS)).toHaveLength(23);
+    expect(audioFiles).toHaveLength(23);
     for (const file of audioFiles) expect(existsSync(file), file).toBe(true);
     for (const asset of Object.values(AUDIO_ASSETS)) {
       expect(asset.url.startsWith("/audio/")).toBe(false);
@@ -105,6 +133,16 @@ describe("Yacht audio registry", () => {
       expect(selected).not.toBe(previous);
       previous = selected ?? undefined;
     }
+  });
+
+  it("layers two distinct dice samples without immediately repeating the same pair", () => {
+    const first = chooseAudioPoolSamples(AUDIO_POOLS.diceShake, 2, undefined, () => 0);
+    const second = chooseAudioPoolSamples(AUDIO_POOLS.diceShake, 2, first, () => 0);
+    expect(first).toHaveLength(2);
+    expect(new Set(first).size).toBe(2);
+    expect(second).toHaveLength(2);
+    expect(new Set(second).size).toBe(2);
+    expect([...second].sort()).not.toEqual([...first].sort());
   });
 
   it("keeps BGM below dice and system in the default mix", () => {
@@ -135,6 +173,73 @@ describe("Yacht audio event policy", () => {
     const reconnectBaseline = room({ revision: 2, status: "STARTED", game: game({ rollsUsed: 2, rollsRemaining: 1 }) });
     expect(isRollTransition(previous, rolled)).toBe(true);
     expect(isRollTransition(reconnectBaseline, reconnectBaseline)).toBe(false);
+  });
+
+  it("selects normal, special, and exclusive Yacht alerts from authoritative results", () => {
+    const normal = room({ status: "STARTED", game: game({ rollsUsed: 1 }) });
+    const special = room({
+      status: "STARTED",
+      game: game({ rollsUsed: 1, matchedCombinations: ["SMALL_STRAIGHT", "LARGE_STRAIGHT"] }),
+    });
+    const yacht = room({
+      status: "STARTED",
+      game: game({ rollsUsed: 1, matchedCombinations: ["FOUR_OF_A_KIND", "YACHT"] }),
+    });
+    expect(rollResultAudioAsset(normal)).toBe("alert_normal_combination");
+    expect(rollResultAudioAsset(special)).toBe("alert_special_combination");
+    expect(rollResultAudioAsset(yacht)).toBe("alert_yacht");
+    expect(rollResultAudioAsset(room({ status: "STARTED", game: game() }))).toBeNull();
+  });
+
+  it("emits score-write audio only for one authoritative null-to-number turn", () => {
+    const previous = room({
+      revision: 10,
+      status: "STARTED",
+      game: game({ scoreCards: { host: scoreCard(), guest: scoreCard() }, completedTurns: 0 }),
+    });
+    const recorded = room({
+      revision: 11,
+      status: "STARTED",
+      game: game({
+        scoreCards: { host: scoreCard({ CHOICE: 21 }), guest: scoreCard() },
+        completedTurns: 1,
+        currentPlayerId: "guest",
+      }),
+    });
+    expect(scoreWriteAudioChanges(previous, recorded)).toEqual([
+      { playerId: "host", category: "CHOICE", score: 21 },
+    ]);
+    expect(scoreWriteAudioChanges(recorded, recorded)).toEqual([]);
+    expect(scoreWriteAudioChanges(previous, room({
+      revision: 12,
+      status: "STARTED",
+      game: game({
+        scoreCards: { host: scoreCard({ CHOICE: 21 }), guest: scoreCard({ ONES: 2 }) },
+        completedTurns: 2,
+      }),
+    }))).toEqual([]);
+  });
+
+  it("still recognizes the final authoritative score write", () => {
+    const previous = room({
+      revision: 20,
+      status: "STARTED",
+      game: game({ scoreCards: { host: scoreCard(), guest: scoreCard() }, completedTurns: 23 }),
+    });
+    const finished = room({
+      revision: 21,
+      status: "STARTED",
+      game: game({
+        phase: "FINISHED",
+        currentPlayerId: null,
+        scoreCards: { host: scoreCard(), guest: scoreCard({ YACHT: 50 }) },
+        completedTurns: 24,
+        winnerPlayerIds: ["guest"],
+      }),
+    });
+    expect(scoreWriteAudioChanges(previous, finished)).toEqual([
+      { playerId: "guest", category: "YACHT", score: 50 },
+    ]);
   });
 
   it("emits player-in and guest ready changes without treating the host as ready", () => {

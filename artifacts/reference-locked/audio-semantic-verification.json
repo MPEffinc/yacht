@@ -1,0 +1,33 @@
+{
+  "environment": "Chromium, two live clients through public HTTPS/WSS, deployed production image",
+  "result": "PASS",
+  "roll": {
+    "authoritativeRoomViewAtMs": 2778.4,
+    "matchedCombinations": [],
+    "expectedAlert": "alert_normal_combination",
+    "alertDelayAfterRoomViewMs": 1013.8,
+    "shakeLayers": [
+      "dice-shake-2-BnmFoWz7.ogg",
+      "dice-shake-3-Bqb6KmRJ.ogg"
+    ],
+    "shakeSharedAudioContextTime": 2.183066,
+    "throwLayers": [
+      "dice-throw-1-Crl8Wa0K.ogg",
+      "dice-throw-2-CIWgGdJU.ogg"
+    ],
+    "throwSharedAudioContextTime": 2.522658
+  },
+  "scoreWrite": {
+    "authoritativeRoomViewAtMs": 4624.7,
+    "layers": [
+      "write_score_alert-D9hniU5T.mp3",
+      "write_score_pencil-Tpntdf6H.mp3"
+    ],
+    "sharedAudioContextTime": 4.034857
+  },
+  "dedupe": {
+    "refreshNonLoopSources": 0,
+    "samePageReconnectRoomViews": 1,
+    "samePageReconnectNonLoopSources": 0
+  }
+}

@@ -143,7 +143,9 @@ Roll 결과는 항상 server-authoritative snapshot으로 먼저 확정되며, �
 
 브라우저 오디오는 Web Audio API 기반이며 첫 `pointerdown` 또는 `keydown`에서 Safari/iOS 호환 silent-buffer 방식으로 unlock합니다. Home/Join/Lobby는 lobby BGM, Playing은 main BGM을 loop하며 게임 시작 때 crossfade하고 결과 화면에서는 BGM을 낮춘 뒤 플레이어별 victory/loss cue를 재생합니다.
 
-Roll sound는 로컬 버튼 클릭이 아니라 authoritative `ROOM_VIEW`의 `rollsUsed` 증가를 관찰하므로 모든 플레이어가 함께 듣습니다. 3개의 shake와 3개의 throw sample을 직전 sample과 겹치지 않게 presentation-only random으로 선택하며, reconnect의 첫 snapshot은 baseline으로만 사용해 이전 Roll이나 Turn cue를 재생하지 않습니다. 우측 상단 Audio 설정에서 BGM/SFX 볼륨과 mute를 조절할 수 있고 `yacht.audio.preferences.v1`에 저장됩니다.
+Roll sound는 로컬 버튼 클릭이 아니라 authoritative `ROOM_VIEW`의 `rollsUsed` 증가를 관찰하므로 모든 플레이어가 함께 듣습니다. 3개의 shake와 3개의 throw sample에서 각각 서로 다른 2개를 골라 같은 시각에 겹쳐 재생하고, 직전 조합과 같은 pair는 피하는 presentation-only random을 사용합니다. Roll 연출이 끝나면 서버가 확정한 `matchedCombinations`에 따라 normal/special/Yacht alert를 재생하며 Yacht alert는 special alert에 우선합니다.
+
+점수 기록음은 authoritative score card에서 한 category가 `null`에서 숫자로 바뀌고 `completedTurns`가 정확히 1 증가했을 때만 alert와 pencil을 같은 시각에 겹쳐 재생합니다. reconnect의 첫 snapshot은 baseline으로만 사용하므로 기존 Roll, 점수 기록, Turn cue를 다시 재생하지 않습니다. 우측 상단 Audio 설정에서 BGM/SFX 볼륨과 mute를 조절할 수 있고 `yacht.audio.preferences.v1`에 저장됩니다.
 
 ## Docker
 
