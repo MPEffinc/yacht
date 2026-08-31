@@ -1,0 +1,21 @@
+{
+  "environment": "Chromium, public HTTPS/WSS, 390x844 mobile host plus 1280x800 desktop guest",
+  "result": "PASS",
+  "audio": {
+    "yourTurnSfxPlayed": false,
+    "normalCombinationAlertObserved": true,
+    "normalCombinationGain": 1.24
+  },
+  "rollPresentation": {
+    "scorePreviewCountDuringRoll": 0,
+    "scorePreviewCountAtAlertStart": 0,
+    "scorePreviewCountAfterAlertStart": 12,
+    "combinationAnimationDuration": "3.6s"
+  },
+  "mobileScoreSheet": {
+    "handle": { "x": 9, "width": 372, "viewportWidth": 390, "centered": true },
+    "paperHintTexture": "ivory-paper.png",
+    "closeBarPaperGapPx": 1,
+    "autoClosedAfterAuthoritativeScore": true
+  }
+}

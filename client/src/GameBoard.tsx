@@ -75,7 +75,8 @@ const lowerCategoryMarks: Partial<Record<ScoreCategory, string>> = {
 };
 
 const ROLL_PRESENTATION_MS = 1_000;
-const COMBINATION_PRESENTATION_MS = 1_800;
+const SCORE_PREVIEW_AFTER_ALERT_MS = 180;
+const COMBINATION_PRESENTATION_MS = 3_600;
 
 interface CombinationAlert {
   primary: ScoreCategory;
@@ -219,6 +220,7 @@ export function GameBoard({
   const [visualFaces, setVisualFaces] = useState<Partial<Record<number, DieValue>>>({});
   const [combinationAlert, setCombinationAlert] = useState<CombinationAlert | null>(null);
   const [presentationLocked, setPresentationLocked] = useState(false);
+  const [scorePreviewsRevealed, setScorePreviewsRevealed] = useState(true);
   const [turnTransition, setTurnTransition] = useState<string | null>(null);
   const [reducedMotion, setReducedMotion] = useState(
     () => window.matchMedia("(prefers-reduced-motion: reduce)").matches,
@@ -232,7 +234,9 @@ export function GameBoard({
   const rollTimerRef = useRef<number | null>(null);
   const rollFaceTimersRef = useRef<number[]>([]);
   const combinationTimerRef = useRef<number | null>(null);
+  const scorePreviewTimerRef = useRef<number | null>(null);
   const turnTimerRef = useRef<number | null>(null);
+  const submittedScoreRef = useRef<{ category: ScoreCategory; revision: number } | null>(null);
   const playersById = new Map(room.players.map((player) => [player.id, player]));
   const currentPlayer = game.currentPlayerId
     ? playersById.get(game.currentPlayerId) ?? null
@@ -278,7 +282,9 @@ export function GameBoard({
         rollFaceTimersRef.current.forEach((timer) => window.clearTimeout(timer));
         rollFaceTimersRef.current = [];
         if (combinationTimerRef.current !== null) window.clearTimeout(combinationTimerRef.current);
+        if (scorePreviewTimerRef.current !== null) window.clearTimeout(scorePreviewTimerRef.current);
         setCombinationAlert(null);
+        setScorePreviewsRevealed(false);
 
         const matched = combinationPriority.filter((category) =>
           game.matchedCombinations.includes(category),
@@ -297,7 +303,10 @@ export function GameBoard({
           setRollingIndices([]);
           setVisualFaces({});
           setPresentationLocked(false);
-          revealCombination();
+          rollTimerRef.current = window.setTimeout(() => {
+            revealCombination();
+            rollTimerRef.current = null;
+          }, ROLL_PRESENTATION_MS);
         } else {
           setRollingIndices(rolled);
           setPresentationLocked(true);
@@ -320,6 +329,10 @@ export function GameBoard({
             rollTimerRef.current = null;
           }, ROLL_PRESENTATION_MS);
         }
+        scorePreviewTimerRef.current = window.setTimeout(() => {
+          setScorePreviewsRevealed(true);
+          scorePreviewTimerRef.current = null;
+        }, ROLL_PRESENTATION_MS + SCORE_PREVIEW_AFTER_ALERT_MS);
       }
     }
 
@@ -383,6 +396,7 @@ export function GameBoard({
     if (rollTimerRef.current !== null) window.clearTimeout(rollTimerRef.current);
     rollFaceTimersRef.current.forEach((timer) => window.clearTimeout(timer));
     if (combinationTimerRef.current !== null) window.clearTimeout(combinationTimerRef.current);
+    if (scorePreviewTimerRef.current !== null) window.clearTimeout(scorePreviewTimerRef.current);
     if (turnTimerRef.current !== null) window.clearTimeout(turnTimerRef.current);
   }, []);
 
@@ -413,8 +427,20 @@ export function GameBoard({
   }, [leaveDialogOpen, mobileScoreOpen, pendingScore]);
 
   useEffect(() => {
-    if (game.phase === "FINISHED") setMobileScoreOpen(false);
+    if (game.phase === "FINISHED") {
+      submittedScoreRef.current = null;
+      setMobileScoreOpen(false);
+    }
   }, [game.phase]);
+
+  useEffect(() => {
+    const submitted = submittedScoreRef.current;
+    if (!submitted || room.revision <= submitted.revision || !selfPlayerId) return;
+    const committed = game.scoreCards[selfPlayerId]?.scores[submitted.category];
+    if (typeof committed !== "number") return;
+    submittedScoreRef.current = null;
+    setMobileScoreOpen(false);
+  }, [game.scoreCards, room.revision, selfPlayerId]);
 
   useEffect(() => {
     if (!pendingScore) return;
@@ -461,6 +487,7 @@ export function GameBoard({
   function submitScore(): void {
     if (!pendingScore) return;
     const category = pendingScore.category;
+    if (mobileScoreOpen) submittedScoreRef.current = { category, revision: room.revision };
     setPendingScore(null);
     onScore(category);
   }
@@ -526,7 +553,7 @@ export function GameBoard({
               onClick={() => setMobileScoreOpen(false)}
               type="button"
             >
-              <span aria-hidden="true">⌄</span> CLOSE
+              <span aria-hidden="true" /> CLOSE
             </button>
             <ScoreSheet
               busy={inputLocked}
@@ -535,6 +562,7 @@ export function GameBoard({
               pendingScore={pendingScore}
               playersById={playersById}
               room={room}
+              scorePreviewsRevealed={scorePreviewsRevealed}
               selfPlayerId={selfPlayerId}
               turnTransition={turnTransition}
             />
@@ -645,7 +673,7 @@ export function GameBoard({
           >
             <span>SCORE SHEET</span>
             <strong>VIEW SCORES</strong>
-            <i aria-hidden="true">⌃</i>
+            <i aria-hidden="true" />
           </button>
         </div>
         {game.phase === "FINISHED" && (
@@ -865,6 +893,7 @@ function ScoreSheet({
   isMyTurn,
   busy,
   pendingScore,
+  scorePreviewsRevealed,
   turnTransition,
   playersById,
   onConfirmScore,
@@ -874,6 +903,7 @@ function ScoreSheet({
   isMyTurn: boolean;
   busy: boolean;
   pendingScore: PendingScore | null;
+  scorePreviewsRevealed: boolean;
   turnTransition: string | null;
   playersById: Map<string, PublicRoomSnapshot["players"][number]>;
   onConfirmScore: (category: ScoreCategory, score: number) => void;
@@ -914,7 +944,7 @@ function ScoreSheet({
         <th scope="row"><CategoryLabel category={category} /></th>
         {game.playerOrder.map((playerId) => {
           const score = game.scoreCards[playerId]!.scores[category];
-          const preview = game.availableScores?.[category];
+          const preview = scorePreviewsRevealed ? game.availableScores?.[category] : undefined;
           const selectable =
             isMyTurn &&
             playerId === selfPlayerId &&

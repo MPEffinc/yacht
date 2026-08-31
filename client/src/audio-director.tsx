@@ -13,7 +13,6 @@ import {
   isFinishTransition,
   isGameStartTransition,
   isRollTransition,
-  isSelfTurnTransition,
   joinedPlayerIds,
   readyAudioChanges,
   rollResultAudioAsset,
@@ -26,7 +25,6 @@ const DICE_THROW_DELAY_MS = 360;
 const DICE_SHAKE_DURATION_MS = 560;
 const ROLL_RESULT_ALERT_DELAY_MS = 1_000;
 const GAME_MAIN_BGM_DELAY_MS = 420;
-const INITIAL_TURN_CUE_DELAY_MS = 700;
 
 interface AudioDirectorProps {
   baselineVersion?: number;
@@ -202,14 +200,6 @@ export function AudioDirector({
         priority: "high",
       });
       schedule(() => void audioManager.playBgm("bgm_main", { fadeMs: 600 }), GAME_MAIN_BGM_DELAY_MS);
-      if (isSelfTurnTransition(previous, room, selfPlayerId)) {
-        schedule(() => {
-          void audioManager.playSfx("your_turn", {
-            dedupeKey: `turn:${room.id}:${room.revision}:${selfPlayerId}`,
-            priority: "high",
-          });
-        }, INITIAL_TURN_CUE_DELAY_MS);
-      }
     } else if (audioScene(previous) !== audioScene(room)) {
       const scene = audioScene(room);
       if (scene === "LOBBY") {
@@ -251,13 +241,6 @@ export function AudioDirector({
       void audioManager.playLayered(["write_score_alert", "write_score_pencil"], {
         dedupeKey: scoreKey,
         priority: "normal",
-      });
-    }
-
-    if (!gameStarted && isSelfTurnTransition(previous, room, selfPlayerId)) {
-      void audioManager.playSfx("your_turn", {
-        dedupeKey: `turn:${room.id}:${room.revision}:${selfPlayerId}`,
-        priority: "high",
       });
     }
 

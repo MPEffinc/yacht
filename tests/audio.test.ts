@@ -149,6 +149,10 @@ describe("Yacht audio registry", () => {
     expect(DEFAULT_AUDIO_VOLUMES.BGM).toBeLessThan(DEFAULT_AUDIO_VOLUMES.DICE);
     expect(DEFAULT_AUDIO_VOLUMES.BGM).toBeLessThan(DEFAULT_AUDIO_VOLUMES.SYSTEM);
   });
+
+  it("uses the requested doubled gain for the normal combination alert", () => {
+    expect(AUDIO_ASSETS.alert_normal_combination.gain).toBe(1.24);
+  });
 });
 
 describe("Yacht audio event policy", () => {
