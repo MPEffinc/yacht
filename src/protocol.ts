@@ -37,7 +37,7 @@ export const clientMessageSchema = z.discriminatedUnion("event", [
       event: z.literal("CREATE_ROOM"),
       requestId: requestIdSchema,
       nickname: nicknameSchema,
-      maxPlayers: z.number().int().min(2).max(8).optional(),
+      maxPlayers: z.number().int().min(2).max(6).optional(),
     })
     .strict(),
   z

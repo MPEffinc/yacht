@@ -501,7 +501,11 @@ export function GameBoard({
           roomId={room.id}
         />
 
-        <div className="tabletop-pieces">
+        <div
+          className="tabletop-pieces"
+          data-player-count={game.playerOrder.length}
+          style={{ "--player-count": game.playerOrder.length } as CSSProperties}
+        >
           <ScoreSheet
             busy={inputLocked}
             isMyTurn={isMyTurn}

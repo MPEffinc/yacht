@@ -83,7 +83,7 @@ export function App(): ReactElement {
   const [connection, setConnection] = useState<ConnectionStatus>("CONNECTING");
   const [nickname, setNickname] = useState("");
   const [roomCode, setRoomCode] = useState("");
-  const [maxPlayers, setMaxPlayers] = useState(8);
+  const [maxPlayers, setMaxPlayers] = useState(2);
   const [room, setRoom] = useState<PublicRoomSnapshot | null>(null);
   const [selfPlayerId, setSelfPlayerId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -577,8 +577,8 @@ export function App(): ReactElement {
             <label>
               MAX PLAYERS
               <select value={maxPlayers} onChange={(event) => setMaxPlayers(Number(event.target.value))}>
-                {Array.from({ length: 7 }, (_, index) => index + 2).map((count) => (
-                  <option key={count} value={count}>{count}{count === 8 ? " · DEFAULT" : ""}</option>
+                {Array.from({ length: 5 }, (_, index) => index + 2).map((count) => (
+                  <option key={count} value={count}>{count}{count === 2 ? " · DEFAULT" : ""}</option>
                 ))}
               </select>
             </label>

@@ -1,6 +1,6 @@
 # Yacht Dice Online
 
-Yacht Dice Online의 Phase 0~3 구현입니다. `/yacht/` 하위 경로에서 2~8명이 로비를 만들고 실제 Yacht Dice `RULESET_V1` 게임을 끝까지 반복 플레이할 수 있습니다. 주사위, 점수, 턴, 승자는 모두 서버가 결정합니다.
+Yacht Dice Online의 Phase 0~3 구현입니다. `/yacht/` 하위 경로에서 2~6명이 로비를 만들고 실제 Yacht Dice `RULESET_V1` 게임을 끝까지 반복 플레이할 수 있습니다. 주사위, 점수, 턴, 승자는 모두 서버가 결정합니다.
 
 ## Architecture
 
@@ -76,7 +76,7 @@ SCORE_CATEGORY
 
 ## Lobby rules
 
-- 2~8명, 기본 최대 인원 8명
+- 2~6명, 기본 최대 인원 2명
 - trim/NFC 정규화된 1~20자 Unicode 닉네임과 방 내 대소문자 무시 중복 방지
 - Node `crypto` 기반 Room ID, Player ID, session token
 - 연결 종료 후 기본 60초 동안 `DISCONNECTED_GRACE` 유지

@@ -23,7 +23,7 @@ function createTwoPlayerRoom(): {
   guest: PlayerRecord;
 } {
   const service = new RoomService();
-  const created = service.createRoom("Host", 8);
+  const created = service.createRoom("Host", 6);
   const joined = service.joinRoom(created.room.id, "Guest");
   return {
     service,
@@ -38,7 +38,7 @@ describe("RoomService", () => {
     const service = new RoomService();
     const roomIds = new Set<string>();
     for (let index = 0; index < 100; index += 1) {
-      const result = service.createRoom(`Host ${index}`, 8);
+      const result = service.createRoom(`Host ${index}`, 6);
       expect(result.room.id).toMatch(/^[ABCDEFGHJKLMNPQRSTUVWXYZ23456789]{8}$/);
       expect(result.player.id).toMatch(/^[0-9a-f-]{36}$/);
       expect(result.player.sessionToken).toMatch(/^[A-Za-z0-9_-]{43}$/);
@@ -47,6 +47,13 @@ describe("RoomService", () => {
       roomIds.add(result.room.id);
     }
     expect(roomIds.size).toBe(100);
+  });
+
+  it("defaults to two seats and caps rooms at six players", () => {
+    const service = new RoomService();
+    expect(service.createRoom("Default Host").room.maxPlayers).toBe(2);
+    expect(service.createRoom("Six Seat Host", 6).room.maxPlayers).toBe(6);
+    expectRoomError(() => service.createRoom("Too Many", 7), "INVALID_MESSAGE");
   });
 
   it("normalizes Unicode nicknames and rejects invalid values", () => {
@@ -59,7 +66,7 @@ describe("RoomService", () => {
 
   it("rejects duplicate normalized nicknames", () => {
     const service = new RoomService();
-    const created = service.createRoom("Alice", 8);
+    const created = service.createRoom("Alice", 6);
     expectRoomError(
       () => service.joinRoom(created.room.id, " alice "),
       "DUPLICATE_NICKNAME",
@@ -150,7 +157,7 @@ describe("RoomService", () => {
 
   it("expires a player after the reconnect grace period and deletes an empty room", () => {
     const service = new RoomService({ reconnectGraceMs: 100 });
-    const created = service.createRoom("Host", 8, 1_000);
+    const created = service.createRoom("Host", 6, 1_000);
     const state = service.markDisconnected(created.room.id, created.player.id, 2_000);
     expect(state?.reconnectDeadline).toBe(2_100);
     expect(
@@ -172,7 +179,7 @@ describe("RoomService", () => {
 
   it("transfers host authority when a disconnected host expires", () => {
     const service = new RoomService({ reconnectGraceMs: 100 });
-    const created = service.createRoom("Host", 8, 1_000);
+    const created = service.createRoom("Host", 6, 1_000);
     const guest = service.joinRoom(created.room.id, "Guest").player;
     const disconnected = service.markDisconnected(created.room.id, created.player.id, 2_000);
     expectRoomError(

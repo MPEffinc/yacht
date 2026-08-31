@@ -37,7 +37,7 @@ function startedRoom(reconnectGraceMs = 60_000): {
     reconnectGraceMs,
     dieRoller: () => values[rollIndex++] ?? 6,
   });
-  const created = service.createRoom("Host", 8);
+  const created = service.createRoom("Host", 6);
   const host = created.player;
   const roomId = created.room.id;
   const guest = service.joinRoom(roomId, "Guest").player;

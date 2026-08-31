@@ -22,8 +22,8 @@ import {
 } from "./protocol.js";
 
 export const MIN_PLAYERS = 2;
-export const DEFAULT_MAX_PLAYERS = 8;
-export const MAX_PLAYERS = 8;
+export const DEFAULT_MAX_PLAYERS = 2;
+export const MAX_PLAYERS = 6;
 export const DEFAULT_RECONNECT_GRACE_MS = 60_000;
 
 export class RoomError extends Error {
