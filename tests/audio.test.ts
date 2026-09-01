@@ -10,7 +10,6 @@ import {
   audioScene,
   finishedAudioAsset,
   isFinishTransition,
-  isBotRematchTransition,
   isGameStartTransition,
   isRollTransition,
   isSelfTurnTransition,
@@ -58,6 +57,7 @@ function player(id: string, ready = false, isHost = false): PublicPlayer {
     id,
     nickname: id,
     kind: "HUMAN",
+    botDifficulty: null,
     ready,
     connectionState: "CONNECTED",
     joinOrder: isHost ? 1 : 2,
@@ -100,7 +100,6 @@ function scoreCard(overrides: Partial<Record<ScoreCategory, number | null>> = {}
 function room(overrides: Partial<PublicRoomSnapshot> = {}): PublicRoomSnapshot {
   return {
     id: "ABCDEFGH",
-    mode: "MULTIPLAYER",
     revision: 1,
     status: "LOBBY",
     createdAt: "2026-08-31T00:00:00.000Z",
@@ -172,22 +171,6 @@ describe("Yacht audio event policy", () => {
     expect(isGameStartTransition(previous, next)).toBe(true);
     expect(isSelfTurnTransition(previous, next, "host")).toBe(true);
     expect(isSelfTurnTransition(previous, next, "guest")).toBe(false);
-  });
-
-  it("detects a BOT rematch as a fresh game transition", () => {
-    const previous = room({
-      mode: "BOT",
-      status: "STARTED",
-      game: game({ phase: "FINISHED", currentPlayerId: null, completedTurns: 24 }),
-    });
-    const next = room({
-      mode: "BOT",
-      revision: 2,
-      status: "STARTED",
-      game: game({ currentPlayerId: "host", completedTurns: 0, rollsUsed: 0 }),
-    });
-    expect(isBotRematchTransition(previous, next)).toBe(true);
-    expect(isBotRematchTransition(next, next)).toBe(false);
   });
 
   it("detects authoritative roll increments but not reconnect baselines", () => {

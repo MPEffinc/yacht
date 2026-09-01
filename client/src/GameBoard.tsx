@@ -84,11 +84,6 @@ interface CombinationAlert {
   revision: number;
 }
 
-interface PendingDieFlip {
-  rect: DOMRect;
-  expectedRevision: number;
-}
-
 interface ScatterPosition {
   x: number;
   y: number;
@@ -190,7 +185,6 @@ interface GameBoardProps {
   onSetHeld: (indices: number[]) => void;
   onScore: (category: ScoreCategory) => void;
   onLeave: () => void;
-  onRematchBot: () => void;
   onReturnToLobby: () => void;
 }
 
@@ -209,7 +203,6 @@ export function GameBoard({
   onSetHeld,
   onScore,
   onLeave,
-  onRematchBot,
   onReturnToLobby,
 }: GameBoardProps): ReactElement {
   const game = room.game!;
@@ -232,7 +225,9 @@ export function GameBoard({
   const gameBoardRef = useRef<HTMLElement>(null);
   const scoreDialogRef = useRef<HTMLDivElement>(null);
   const scoreTriggerRef = useRef<HTMLElement | null>(null);
-  const pendingDieFlipsRef = useRef(new Map<number, PendingDieFlip>());
+  const lastDieRectsRef = useRef(new Map<number, DOMRect>());
+  const previousHeldRef = useRef(game.dice.map((die) => die.held));
+  const previousHeldRevisionRef = useRef(room.revision);
   const rollTimerRef = useRef<number | null>(null);
   const rollFaceTimersRef = useRef<number[]>([]);
   const combinationTimerRef = useRef<number | null>(null);
@@ -258,6 +253,51 @@ export function GameBoard({
     mediaQuery.addEventListener("change", onChange);
     return () => mediaQuery.removeEventListener("change", onChange);
   }, []);
+
+  useLayoutEffect(() => {
+    const currentRects = new Map<number, DOMRect>();
+    for (let index = 0; index < game.dice.length; index += 1) {
+      const element = gameBoardRef.current?.querySelector<HTMLElement>(`[data-die-index="${index}"]`);
+      if (element) currentRects.set(index, element.getBoundingClientRect());
+    }
+
+    const sequential = room.revision === previousHeldRevisionRef.current + 1;
+    if (sequential) {
+      game.dice.forEach((die, index) => {
+        if (previousHeldRef.current[index] === die.held) return;
+        const first = lastDieRectsRef.current.get(index);
+        const last = currentRects.get(index);
+        const element = gameBoardRef.current?.querySelector<HTMLElement>(`[data-die-index="${index}"]`);
+        if (!first || !last || !element) return;
+        const deltaX = first.left - last.left;
+        const deltaY = first.top - last.top;
+        const startScale = first.width / last.width;
+        element.style.zIndex = "12";
+        const animation = element.animate(
+          reducedMotion
+            ? [{ opacity: .72 }, { opacity: 1 }]
+            : [
+                { translate: `${deltaX}px ${deltaY}px`, scale: `${startScale}` },
+                { translate: `${deltaX * .08}px ${deltaY * .08}px`, scale: "1.035", offset: .76 },
+                { translate: "0 -2px", scale: ".985", offset: .9 },
+                { translate: "0 0", scale: "1" },
+              ],
+          {
+            duration: reducedMotion ? 100 : 520,
+            easing: "cubic-bezier(.2,.78,.24,1)",
+          },
+        );
+        void animation.finished.then(
+          () => { element.style.zIndex = ""; },
+          () => { element.style.zIndex = ""; },
+        );
+      });
+    }
+
+    lastDieRectsRef.current = currentRects;
+    previousHeldRef.current = game.dice.map((die) => die.held);
+    previousHeldRevisionRef.current = room.revision;
+  }, [game.dice, reducedMotion, room.revision]);
 
   useLayoutEffect(() => {
     const previous = previousGameRef.current;
@@ -346,11 +386,12 @@ export function GameBoard({
       previous.currentPlayerId !== game.currentPlayerId &&
       game.currentPlayerId !== null;
     if (isTurnTransition) {
+      const nextPlayer = room.players.find((player) => player.id === game.currentPlayerId);
       const message = game.currentPlayerId === selfPlayerId
         ? "YOUR TURN"
-        : room.players.find((player) => player.id === game.currentPlayerId)?.kind === "BOT"
-          ? "YACHT BOT · THINKING..."
-          : `${room.players.find((player) => player.id === game.currentPlayerId)?.nickname ?? "PLAYER"} · TURN`;
+        : nextPlayer?.kind === "BOT"
+          ? `${nextPlayer.nickname} · THINKING...`
+          : `${nextPlayer?.nickname ?? "PLAYER"} · TURN`;
       if (turnTimerRef.current !== null) window.clearTimeout(turnTimerRef.current);
       setTurnTransition(message);
       turnTimerRef.current = window.setTimeout(() => {
@@ -359,42 +400,6 @@ export function GameBoard({
       }, reducedMotion ? 1 : 820);
     }
   }, [game, reducedMotion, room.players, room.revision, selfPlayerId]);
-
-  useLayoutEffect(() => {
-    if (pendingDieFlipsRef.current.size === 0) return;
-    for (const [index, pending] of pendingDieFlipsRef.current) {
-      if (pending.expectedRevision !== room.revision) {
-        if (pending.expectedRevision < room.revision) pendingDieFlipsRef.current.delete(index);
-        continue;
-      }
-      const element = gameBoardRef.current?.querySelector<HTMLElement>(`[data-die-index="${index}"]`);
-      if (!element) continue;
-      const last = element.getBoundingClientRect();
-      const deltaX = pending.rect.left - last.left;
-      const deltaY = pending.rect.top - last.top;
-      const startScale = pending.rect.width / last.width;
-      element.style.zIndex = "12";
-      const animation = element.animate(
-        reducedMotion
-          ? [{ opacity: .72 }, { opacity: 1 }]
-          : [
-              { translate: `${deltaX}px ${deltaY}px`, scale: `${startScale}` },
-              { translate: `${deltaX * .08}px ${deltaY * .08}px`, scale: "1.035", offset: .78 },
-              { translate: "0 -2px", scale: ".985", offset: .9 },
-              { translate: "0 0", scale: "1" },
-            ],
-        {
-          duration: reducedMotion ? 100 : 340,
-          easing: "cubic-bezier(.2,.78,.24,1)",
-        },
-      );
-      void animation.finished.then(
-        () => { element.style.zIndex = ""; },
-        () => { element.style.zIndex = ""; },
-      );
-      pendingDieFlipsRef.current.delete(index);
-    }
-  }, [game.dice, reducedMotion, room.revision]);
 
   useEffect(() => () => {
     if (rollTimerRef.current !== null) window.clearTimeout(rollTimerRef.current);
@@ -461,13 +466,6 @@ export function GameBoard({
 
   function toggleKept(index: number): void {
     if (!canKeep) return;
-    const element = gameBoardRef.current?.querySelector<HTMLElement>(`[data-die-index="${index}"]`);
-    if (element) {
-      pendingDieFlipsRef.current.set(index, {
-        rect: element.getBoundingClientRect(),
-        expectedRevision: room.revision + 1,
-      });
-    }
     const heldIndices = game.dice
       .map((die, dieIndex) => ({ kept: dieIndex === index ? !die.held : die.held, dieIndex }))
       .filter((entry) => entry.kept)
@@ -541,7 +539,6 @@ export function GameBoard({
             setLeaveDialogOpen(false);
           }}
           roomId={room.id}
-          roomMode={room.mode}
         />
 
         <div
@@ -664,10 +661,10 @@ export function GameBoard({
                     ? "SCORE OR RELEASE A DIE"
                     : game.rollsUsed > 0 && isMyTurn
                       ? "PRESS A DIE TO KEEP"
-                      : isMyTurn
-                        ? "ROLL TO BEGIN"
+                        : isMyTurn
+                          ? "ROLL TO BEGIN"
                         : currentPlayer?.kind === "BOT"
-                          ? "YACHT BOT · THINKING..."
+                          ? `${currentPlayer.nickname} · ${currentPlayer.botDifficulty} · THINKING...`
                           : "WAITING FOR OPPONENT"}
               </p>
             </div>
@@ -689,8 +686,6 @@ export function GameBoard({
             <ResultPanel
               busy={busy}
               isHost={room.hostPlayerId === selfPlayerId}
-              isBotMode={room.mode === "BOT"}
-              onRematchBot={onRematchBot}
               onReturnToLobby={onReturnToLobby}
               standings={standings}
               winnerPlayerIds={game.winnerPlayerIds}
@@ -799,7 +794,6 @@ function CategoryLabel({ category }: { category: ScoreCategory }): ReactElement 
 
 function TableControls({
   roomId,
-  roomMode,
   connected,
   busy,
   controlsOpen,
@@ -813,7 +807,6 @@ function TableControls({
   onConfirmLeave,
 }: {
   roomId: string;
-  roomMode: PublicRoomSnapshot["mode"];
   connected: boolean;
   busy: boolean;
   controlsOpen: boolean;
@@ -836,7 +829,7 @@ function TableControls({
           onClick={onToggle}
           type="button"
         >
-          <span>{roomMode === "BOT" ? "SOLO TABLE · BOT" : roomId}</span>
+          <span>{roomId}</span>
           <strong className={connected ? "network-online" : "network-offline"}>
             {connected ? "ONLINE" : "RECONNECTING"} <i aria-hidden="true" />
           </strong>
@@ -858,7 +851,7 @@ function TableControls({
         <div className="table-controls-shelf" id="table-controls-shelf">
           <div className="shelf-heading">
             <span>TABLE MENU</span>
-            <strong>{roomMode === "BOT" ? "SOLO TABLE" : roomId}</strong>
+            <strong>{roomId}</strong>
           </div>
           <div className="shelf-status">
             <span>NETWORK</span>
@@ -866,10 +859,10 @@ function TableControls({
               {connected ? "ONLINE" : "RECONNECTING"} <i aria-hidden="true" />
             </strong>
           </div>
-          {roomMode === "MULTIPLAYER" && <button className="shelf-action" onClick={onCopyInvite} type="button">
+          <button className="shelf-action" onClick={onCopyInvite} type="button">
             {copyFeedback === "COPIED" ? "INVITE LINK COPIED" : "COPY INVITE LINK"}
-          </button>}
-          {roomMode === "MULTIPLAYER" && copyFeedback === "ERROR" && (
+          </button>
+          {copyFeedback === "ERROR" && (
             <p className="shelf-feedback" role="status">COPY /yacht/r/{roomId} MANUALLY.</p>
           )}
 
@@ -878,12 +871,8 @@ function TableControls({
               <strong>LEAVE THIS TABLE?</strong>
               <p>
                 {gamePhase === "PLAYING"
-                  ? roomMode === "BOT"
-                    ? "LEAVING ENDS THIS SOLO MATCH."
-                    : "LEAVING ENDS THE GAME AND RETURNS EVERYONE TO THE LOBBY."
-                  : roomMode === "BOT"
-                    ? "LEAVING CLOSES THIS SOLO TABLE."
-                    : "THE REMAINING PLAYERS WILL RETURN TO THE LOBBY."}
+                  ? "LEAVING ENDS THE GAME AND RETURNS EVERYONE TO THE LOBBY."
+                  : "THE REMAINING PLAYERS WILL RETURN TO THE LOBBY."}
               </p>
               <div>
                 <button autoFocus onClick={onCancelLeave} type="button">CANCEL</button>
@@ -1049,7 +1038,11 @@ function ScoreSheet({
                     <span className={playersById.get(playerId)?.kind === "BOT" ? "player-name-line bot-player-name-line" : "player-name-line"}>
                       {current && <i aria-hidden="true" className="current-player-marker" />}
                       <span className="player-name-text">{playersById.get(playerId)?.nickname ?? "Unknown"}</span>
-                      {playersById.get(playerId)?.kind === "BOT" && <b className="bot-badge">BOT</b>}
+                      {playersById.get(playerId)?.kind === "BOT" && (
+                        <b className="bot-badge">
+                          BOT · {playersById.get(playerId)?.botDifficulty}
+                        </b>
+                      )}
                     </span>
                     {(self || current || winner) && (
                       <small>
@@ -1140,17 +1133,13 @@ function ResultPanel({
   standings,
   winnerPlayerIds,
   isHost,
-  isBotMode,
   busy,
-  onRematchBot,
   onReturnToLobby,
 }: {
   standings: Array<{ playerId: string; nickname: string; kind: "HUMAN" | "BOT"; total: number }>;
   winnerPlayerIds: string[];
   isHost: boolean;
-  isBotMode: boolean;
   busy: boolean;
-  onRematchBot: () => void;
   onReturnToLobby: () => void;
 }): ReactElement {
   const winners = standings.filter((entry) => winnerPlayerIds.includes(entry.playerId));
@@ -1174,20 +1163,7 @@ function ResultPanel({
         })}
       </ol>
       <div className="rematch-actions">
-        {isBotMode ? (
-          <>
-            <button
-              className="rematch-button"
-              data-action="rematch-bot-game"
-              disabled={busy}
-              onClick={onRematchBot}
-              type="button"
-            >
-              PLAY AGAIN
-            </button>
-            <p>START A FRESH MATCH AGAINST YACHT BOT.</p>
-          </>
-        ) : isHost ? (
+        {isHost ? (
           <>
             <button
               className="rematch-button"

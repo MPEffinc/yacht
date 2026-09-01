@@ -15,11 +15,11 @@ import type {
 import {
   ROOM_ID_ALPHABET,
   ROOM_ID_LENGTH,
+  type BotDifficulty,
   type ConnectionState,
   type PublicRoomSnapshot,
   type PlayerKind,
   type RoomErrorCode,
-  type RoomMode,
   type RoomStatus,
 } from "./protocol.js";
 
@@ -40,6 +40,7 @@ export interface PlayerRecord {
   nickname: string;
   nicknameKey: string;
   kind: PlayerKind;
+  botDifficulty: BotDifficulty | null;
   sessionToken: string | null;
   ready: boolean;
   connectionState: ConnectionState;
@@ -49,7 +50,6 @@ export interface PlayerRecord {
 
 export interface RoomRecord {
   id: string;
-  mode: RoomMode;
   revision: number;
   status: RoomStatus;
   createdAt: number;
@@ -134,7 +134,6 @@ export class RoomService {
     const host = this.createPlayer(nickname, nicknameKey, 1);
     const room: RoomRecord = {
       id: this.createUniqueRoomId(),
-      mode: "MULTIPLAYER",
       revision: 1,
       status: "LOBBY",
       createdAt: now,
@@ -148,32 +147,8 @@ export class RoomService {
     return { room, player: host };
   }
 
-  createBotGame(rawNickname: string, now = Date.now()): JoinResult {
-    const { nickname, nicknameKey } = normalizeNickname(rawNickname);
-    const human = this.createPlayer(nickname, nicknameKey, 1);
-    const bot = this.createPlayer("YACHT BOT", "yacht bot", 2, "BOT");
-    const room: RoomRecord = {
-      id: this.createUniqueRoomId(),
-      mode: "BOT",
-      revision: 1,
-      status: "STARTED",
-      createdAt: now,
-      hostPlayerId: human.id,
-      maxPlayers: 2,
-      nextJoinOrder: 3,
-      players: new Map([
-        [human.id, human],
-        [bot.id, bot],
-      ]),
-      game: initializeYachtGame([human.id, bot.id]),
-    };
-    this.rooms.set(room.id, room);
-    return { room, player: human };
-  }
-
   joinRoom(roomId: string, rawNickname: string): JoinResult {
     const room = this.requireRoom(roomId);
-    if (room.mode === "BOT") throw new RoomError("ROOM_NOT_JOINABLE");
     if (room.status === "STARTED") throw new RoomError("GAME_ALREADY_STARTED");
     const { nickname, nicknameKey } = normalizeNickname(rawNickname);
     if ([...room.players.values()].some((player) => player.nicknameKey === nicknameKey)) {
@@ -216,6 +191,7 @@ export class RoomService {
     const room = this.requireRoom(roomId);
     const player = this.requirePlayer(room, playerId);
     if (room.status === "STARTED") throw new RoomError("GAME_ALREADY_STARTED");
+    if (player.kind !== "HUMAN") throw new RoomError("INVALID_SESSION");
     if (player.connectionState !== "CONNECTED") throw new RoomError("INVALID_SESSION");
     if (player.ready !== ready) {
       player.ready = ready;
@@ -226,16 +202,19 @@ export class RoomService {
 
   startGame(roomId: string, playerId: string): RoomRecord {
     const room = this.requireRoom(roomId);
-    if (room.mode === "BOT") throw new RoomError("GAME_ALREADY_STARTED");
     this.requirePlayer(room, playerId);
     if (room.hostPlayerId !== playerId) throw new RoomError("NOT_HOST");
     if (room.status === "STARTED") throw new RoomError("GAME_ALREADY_STARTED");
     const players = [...room.players.values()];
-    const connected = players.filter((player) => player.connectionState === "CONNECTED");
-    if (connected.length < MIN_PLAYERS) throw new RoomError("NOT_ENOUGH_PLAYERS");
+    if (players.length < MIN_PLAYERS) throw new RoomError("NOT_ENOUGH_PLAYERS");
     if (
-      players.some((player) => player.connectionState !== "CONNECTED") ||
-      players.some((player) => player.id !== room.hostPlayerId && !player.ready)
+      players.some(
+        (player) => player.kind === "HUMAN" && player.connectionState !== "CONNECTED",
+      ) ||
+      players.some(
+        (player) =>
+          player.kind === "HUMAN" && player.id !== room.hostPlayerId && !player.ready,
+      )
     ) {
       throw new RoomError("PLAYERS_NOT_READY");
     }
@@ -244,6 +223,64 @@ export class RoomService {
       players.sort((left, right) => left.joinOrder - right.joinOrder).map((player) => player.id),
     );
     this.bump(room);
+    return room;
+  }
+
+  addBot(
+    roomId: string,
+    playerId: string,
+    expectedRevision: number,
+  ): RoomRecord {
+    const room = this.requireLobbyHost(roomId, playerId, expectedRevision);
+    if (room.players.size >= room.maxPlayers) throw new RoomError("ROOM_FULL");
+    let botNumber = 1;
+    while (
+      [...room.players.values()].some(
+        (player) => player.nicknameKey === `yacht bot ${botNumber}`,
+      )
+    ) botNumber += 1;
+    const nickname = `YACHT BOT ${botNumber}`;
+    const bot = this.createPlayer(
+      nickname,
+      nickname.toLocaleLowerCase(),
+      room.nextJoinOrder,
+      "BOT",
+      "NORMAL",
+    );
+    room.nextJoinOrder += 1;
+    room.players.set(bot.id, bot);
+    this.bump(room);
+    return room;
+  }
+
+  removeBot(
+    roomId: string,
+    playerId: string,
+    expectedRevision: number,
+    botPlayerId: string,
+  ): RoomRecord {
+    const room = this.requireLobbyHost(roomId, playerId, expectedRevision);
+    const bot = room.players.get(botPlayerId);
+    if (!bot || bot.kind !== "BOT") throw new RoomError("INVALID_BOT_TARGET");
+    room.players.delete(botPlayerId);
+    this.bump(room);
+    return room;
+  }
+
+  setBotDifficulty(
+    roomId: string,
+    playerId: string,
+    expectedRevision: number,
+    botPlayerId: string,
+    difficulty: BotDifficulty,
+  ): RoomRecord {
+    const room = this.requireLobbyHost(roomId, playerId, expectedRevision);
+    const bot = room.players.get(botPlayerId);
+    if (!bot || bot.kind !== "BOT") throw new RoomError("INVALID_BOT_TARGET");
+    if (bot.botDifficulty !== difficulty) {
+      bot.botDifficulty = difficulty;
+      this.bump(room);
+    }
     return room;
   }
 
@@ -287,7 +324,6 @@ export class RoomService {
     expectedRevision: number,
   ): RoomRecord {
     const room = this.requireRoom(roomId);
-    if (room.mode === "BOT") throw new RoomError("ROOM_NOT_JOINABLE");
     this.requirePlayer(room, playerId);
     if (room.revision !== expectedRevision) throw new RoomError("STALE_REVISION");
     if (room.hostPlayerId !== playerId) throw new RoomError("NOT_HOST");
@@ -296,28 +332,6 @@ export class RoomService {
     room.status = "LOBBY";
     room.game = null;
     for (const player of room.players.values()) player.ready = false;
-    this.bump(room);
-    return room;
-  }
-
-  rematchBotGame(
-    roomId: string,
-    playerId: string,
-    expectedRevision: number,
-  ): RoomRecord {
-    const room = this.requireRoom(roomId);
-    const player = this.requirePlayer(room, playerId);
-    if (room.mode !== "BOT" || player.kind !== "HUMAN") {
-      throw new RoomError("INVALID_SESSION");
-    }
-    if (room.revision !== expectedRevision) throw new RoomError("STALE_REVISION");
-    if (room.hostPlayerId !== playerId) throw new RoomError("NOT_HOST");
-    if (room.status !== "STARTED" || !room.game) throw new RoomError("GAME_NOT_STARTED");
-    if (room.game.phase !== "FINISHED") throw new RoomError("GAME_NOT_FINISHED");
-    const playerOrder = [...room.players.values()]
-      .sort((left, right) => left.joinOrder - right.joinOrder)
-      .map((candidate) => candidate.id);
-    room.game = initializeYachtGame(playerOrder);
     this.bump(room);
     return room;
   }
@@ -388,12 +402,14 @@ export class RoomService {
     nicknameKey: string,
     joinOrder: number,
     kind: PlayerKind = "HUMAN",
+    botDifficulty: BotDifficulty | null = null,
   ): PlayerRecord {
     return {
       id: this.playerIdFactory(),
       nickname,
       nicknameKey,
       kind,
+      botDifficulty: kind === "BOT" ? (botDifficulty ?? "NORMAL") : null,
       sessionToken: kind === "HUMAN" ? this.sessionTokenFactory() : null,
       ready: false,
       connectionState: "CONNECTED",
@@ -426,21 +442,36 @@ export class RoomService {
     return room;
   }
 
+  private requireLobbyHost(
+    roomId: string,
+    playerId: string,
+    expectedRevision: number,
+  ): RoomRecord {
+    const room = this.requireRoom(roomId);
+    const player = this.requirePlayer(room, playerId);
+    if (player.kind !== "HUMAN") throw new RoomError("INVALID_SESSION");
+    if (room.revision !== expectedRevision) throw new RoomError("STALE_REVISION");
+    if (room.hostPlayerId !== playerId) throw new RoomError("NOT_HOST");
+    if (room.status !== "LOBBY") throw new RoomError("GAME_ALREADY_STARTED");
+    return room;
+  }
+
   private removePlayer(room: RoomRecord, playerId: string): RemovalResult {
     const player = this.requirePlayer(room, playerId);
     const wasActivelyPlaying = room.status === "STARTED" && room.game?.phase === "PLAYING";
     const hadGame = room.status === "STARTED" && room.game !== null;
-    if (room.mode === "BOT") {
-      if (player.kind !== "HUMAN") throw new RoomError("INVALID_SESSION");
-      this.rooms.delete(room.id);
-      return { room: null, removedPlayer: player, gameAborted: wasActivelyPlaying };
-    }
+    if (player.kind !== "HUMAN") throw new RoomError("INVALID_SESSION");
     room.players.delete(playerId);
     if (room.hostPlayerId === playerId) {
       room.hostPlayerId = this.selectNextHost(room)?.id ?? null;
     }
     this.bump(room);
-    if (room.players.size === 0) {
+    if (
+      ![...room.players.values()].some(
+        (candidate) =>
+          candidate.kind === "HUMAN" && candidate.connectionState === "CONNECTED",
+      )
+    ) {
       this.rooms.delete(room.id);
       return { room: null, removedPlayer: player, gameAborted: wasActivelyPlaying };
     }
@@ -468,7 +499,6 @@ export class RoomService {
     );
     return {
       id: room.id,
-      mode: room.mode,
       revision: room.revision,
       status: room.status,
       createdAt: new Date(room.createdAt).toISOString(),
@@ -476,15 +506,20 @@ export class RoomService {
       minPlayers: MIN_PLAYERS,
       maxPlayers: room.maxPlayers,
       canStart:
-        room.mode === "MULTIPLAYER" &&
         room.status === "LOBBY" &&
         players.length >= MIN_PLAYERS &&
-        players.every((player) => player.connectionState === "CONNECTED") &&
-        players.every((player) => player.id === room.hostPlayerId || player.ready),
+        players.every(
+          (player) => player.kind === "BOT" || player.connectionState === "CONNECTED",
+        ) &&
+        players.every(
+          (player) =>
+            player.kind === "BOT" || player.id === room.hostPlayerId || player.ready,
+        ),
       players: players.map((player) => ({
         id: player.id,
         nickname: player.nickname,
         kind: player.kind,
+        botDifficulty: player.botDifficulty,
         ready: player.ready,
         connectionState: player.connectionState,
         joinOrder: player.joinOrder,

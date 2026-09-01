@@ -34,64 +34,76 @@ function createTwoPlayerRoom(): {
 }
 
 describe("RoomService", () => {
-  it("creates an immediate private Human vs BOT game with no bot session", () => {
+  it("lets the host add, configure, and remove a lobby BOT", () => {
     const service = new RoomService();
-    const created = service.createBotGame("Solo");
+    const created = service.createRoom("Host", 4);
+    service.addBot(created.room.id, created.player.id, created.room.revision);
     const snapshot = service.getSnapshot(created.room.id);
-    expect(snapshot).toMatchObject({
-      mode: "BOT",
-      status: "STARTED",
-      maxPlayers: 2,
-      hostPlayerId: created.player.id,
-      game: { phase: "PLAYING", currentPlayerId: created.player.id },
-    });
+    expect(snapshot).toMatchObject({ status: "LOBBY", revision: 2, canStart: true });
     expect(snapshot.players.map((player) => player.kind)).toEqual(["HUMAN", "BOT"]);
     const bot = [...created.room.players.values()].find((player) => player.kind === "BOT")!;
+    expect(bot.nickname).toBe("YACHT BOT 1");
+    expect(bot.botDifficulty).toBe("NORMAL");
     expect(bot.sessionToken).toBeNull();
     expect(bot.id).not.toBe(created.room.hostPlayerId);
-    expectRoomError(
-      () => service.reconnectRoom(created.room.id, "x".repeat(43)),
-      "INVALID_SESSION",
-    );
-    expectRoomError(() => service.joinRoom(created.room.id, "Intruder"), "ROOM_NOT_JOINABLE");
-  });
-
-  it("deletes the whole BOT room when its human leaves or expires", () => {
-    const service = new RoomService({ reconnectGraceMs: 10 });
-    const left = service.createBotGame("Leaving");
-    expect(service.leaveRoom(left.room.id, left.player.id).room).toBeNull();
-    expect(service.getRoom(left.room.id)).toBeUndefined();
-
-    const expired = service.createBotGame("Expired");
-    const disconnected = service.markDisconnected(expired.room.id, expired.player.id, 100)!;
-    expect(
-      service.expireDisconnected(expired.room.id, expired.player.id, disconnected.reconnectDeadline, 110)?.room,
-    ).toBeNull();
-    expect(service.getRoom(expired.room.id)).toBeUndefined();
-  });
-
-  it("rematches a finished BOT game in place with the human first", () => {
-    const service = new RoomService();
-    const created = service.createBotGame("Again");
-    const originalIds = [...created.room.players.keys()];
-    const originalToken = created.player.sessionToken;
-    created.room.game!.phase = "FINISHED";
-    created.room.game!.currentPlayerId = null;
-    created.room.game!.completedTurns = 24;
-    created.room.game!.winnerPlayerIds = [created.player.id];
-    const rematched = service.rematchBotGame(
-      created.room.id,
-      created.player.id,
-      created.room.revision,
-    );
-    expect([...rematched.players.keys()]).toEqual(originalIds);
-    expect(rematched.players.get(created.player.id)?.sessionToken).toBe(originalToken);
-    expect(rematched.game).toMatchObject({
-      phase: "PLAYING",
-      currentPlayerId: created.player.id,
-      completedTurns: 0,
-      rollsUsed: 0,
+    service.setBotDifficulty(created.room.id, created.player.id, created.room.revision, bot.id, "HARD");
+    expect(service.getSnapshot(created.room.id).players[1]).toMatchObject({
+      kind: "BOT",
+      botDifficulty: "HARD",
     });
+    service.removeBot(created.room.id, created.player.id, created.room.revision, bot.id);
+    expect(service.getSnapshot(created.room.id).players).toHaveLength(1);
+  });
+
+  it("enforces host, lobby, target, revision, and capacity rules for BOT commands", () => {
+    const service = new RoomService();
+    const created = service.createRoom("Host", 3);
+    const guest = service.joinRoom(created.room.id, "Guest").player;
+    expectRoomError(
+      () => service.addBot(created.room.id, guest.id, created.room.revision),
+      "NOT_HOST",
+    );
+    expectRoomError(
+      () => service.addBot(created.room.id, created.player.id, created.room.revision - 1),
+      "STALE_REVISION",
+    );
+    service.addBot(created.room.id, created.player.id, created.room.revision);
+    const bot = [...created.room.players.values()].find((player) => player.kind === "BOT")!;
+    expectRoomError(
+      () => service.addBot(created.room.id, created.player.id, created.room.revision),
+      "ROOM_FULL",
+    );
+    expectRoomError(
+      () => service.setBotDifficulty(created.room.id, guest.id, created.room.revision, bot.id, "HARD"),
+      "NOT_HOST",
+    );
+    expectRoomError(
+      () => service.setBotDifficulty(created.room.id, created.player.id, created.room.revision, guest.id, "HARD"),
+      "INVALID_BOT_TARGET",
+    );
+    expectRoomError(
+      () => service.removeBot(created.room.id, guest.id, created.room.revision, bot.id),
+      "NOT_HOST",
+    );
+    service.setReady(created.room.id, guest.id, true);
+    service.startGame(created.room.id, created.player.id);
+    expectRoomError(
+      () => service.setBotDifficulty(created.room.id, created.player.id, created.room.revision, bot.id, "HARD"),
+      "GAME_ALREADY_STARTED",
+    );
+    expectRoomError(
+      () => service.removeBot(created.room.id, created.player.id, created.room.revision, bot.id),
+      "GAME_ALREADY_STARTED",
+    );
+  });
+
+  it("deletes a BOT-filled room after its last connected Human leaves", () => {
+    const service = new RoomService();
+    const created = service.createRoom("Host", 4);
+    service.addBot(created.room.id, created.player.id, created.room.revision);
+    service.addBot(created.room.id, created.player.id, created.room.revision);
+    expect(service.leaveRoom(created.room.id, created.player.id).room).toBeNull();
+    expect(service.getRoom(created.room.id)).toBeUndefined();
   });
 
   it("creates a room with secure identifiers and an authoritative host", () => {
@@ -160,6 +172,17 @@ describe("RoomService", () => {
     expect(service.getSnapshot(roomId).canStart).toBe(true);
   });
 
+  it("treats BOT seats as ready while still requiring Human guests", () => {
+    const service = new RoomService();
+    const created = service.createRoom("Host", 4);
+    service.addBot(created.room.id, created.player.id, created.room.revision);
+    expect(service.getSnapshot(created.room.id).canStart).toBe(true);
+    const guest = service.joinRoom(created.room.id, "Guest").player;
+    expect(service.getSnapshot(created.room.id).canStart).toBe(false);
+    service.setReady(created.room.id, guest.id, true);
+    expect(service.getSnapshot(created.room.id).canStart).toBe(true);
+  });
+
   it("rejects START_GAME from a non-host", () => {
     const { service, roomId, host, guest } = createTwoPlayerRoom();
     service.setReady(roomId, guest.id, true);
@@ -192,6 +215,17 @@ describe("RoomService", () => {
     expect(service.getRoom(roomId)?.hostPlayerId).not.toBe(third.id);
     service.setReady(roomId, third.id, true);
     expect(service.getSnapshot(roomId).canStart).toBe(true);
+  });
+
+  it("never transfers Host to an earlier BOT seat", () => {
+    const service = new RoomService();
+    const created = service.createRoom("Host", 4);
+    service.addBot(created.room.id, created.player.id, created.room.revision);
+    const bot = [...created.room.players.values()].find((player) => player.kind === "BOT")!;
+    const guest = service.joinRoom(created.room.id, "Guest").player;
+    service.leaveRoom(created.room.id, created.player.id);
+    expect(service.getRoom(created.room.id)?.hostPlayerId).toBe(guest.id);
+    expect(service.getRoom(created.room.id)?.hostPlayerId).not.toBe(bot.id);
   });
 
   it("reconnects a disconnected player with the room-specific token", () => {

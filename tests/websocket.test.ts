@@ -123,56 +123,75 @@ describe("Yacht WebSocket lobby", () => {
     });
   });
 
-  it("direct-starts a private BOT game and schedules the server-owned opponent", async () => {
+  it("adds and configures a server-owned BOT through the normal lobby", async () => {
     const human = await connect();
-    human.send({ event: "CREATE_BOT_GAME", requestId: "bot-create", nickname: "Alice" });
+    human.send({
+      event: "CREATE_ROOM",
+      requestId: "bot-create",
+      nickname: "Alice",
+      maxPlayers: 2,
+    });
     const session = await human.waitFor(
       (message) => message.event === "SESSION_ESTABLISHED" && message.requestId === "bot-create",
     );
     const roomId = session.roomId as string;
-    const started = await human.waitFor(roomView((room) => room.mode === "BOT"));
-    expect(started.room).toMatchObject({
+    await human.waitFor(roomView((room) => room.revision === 1));
+
+    human.send({ event: "ADD_BOT", requestId: "bot-add", expectedRevision: 1 });
+    const [added] = await Promise.all([
+      human.waitFor(roomView((room) => room.revision === 2)),
+      human.waitFor((message) => message.event === "COMMAND_OK" && message.requestId === "bot-add"),
+    ]);
+    expect(added.room).toMatchObject({
       id: roomId,
-      revision: 1,
-      mode: "BOT",
-      status: "STARTED",
+      revision: 2,
+      status: "LOBBY",
       hostPlayerId: session.playerId,
-      game: { phase: "PLAYING", currentPlayerId: session.playerId, rollsUsed: 0 },
+      canStart: true,
       players: [
-        { id: session.playerId, kind: "HUMAN", isHost: true },
-        { kind: "BOT", isHost: false },
+        { id: session.playerId, kind: "HUMAN", botDifficulty: null, isHost: true },
+        { nickname: "YACHT BOT 1", kind: "BOT", botDifficulty: "NORMAL", isHost: false },
       ],
     });
+    const botId = (added.room as { players: Array<{ id: string; kind: string }> }).players
+      .find((player) => player.kind === "BOT")!.id;
 
-    const intruder = await connect();
-    intruder.send({ event: "JOIN_ROOM", requestId: "bot-join", roomId, nickname: "Bob" });
-    expect(await intruder.waitFor((message) => message.requestId === "bot-join")).toMatchObject({
-      event: "ERROR",
-      code: "ROOM_NOT_JOINABLE",
-    });
-
-    human.send({ event: "ROLL_DICE", requestId: "bot-human-roll", expectedRevision: 1 });
-    await Promise.all([
-      human.waitFor((message) => message.event === "COMMAND_OK" && message.requestId === "bot-human-roll"),
-      human.waitFor(roomView((room) => room.revision === 2)),
-    ]);
     human.send({
-      event: "SCORE_CATEGORY",
-      requestId: "bot-human-score",
+      event: "SET_BOT_DIFFICULTY",
+      requestId: "bot-hard",
       expectedRevision: 2,
-      category: "CHOICE",
+      botPlayerId: botId,
+      difficulty: "HARD",
+    });
+    const [hardened] = await Promise.all([
+      human.waitFor(roomView((room) => room.revision === 3)),
+      human.waitFor((message) => message.event === "COMMAND_OK" && message.requestId === "bot-hard"),
+    ]);
+    expect(hardened.room).toMatchObject({
+      players: [{ kind: "HUMAN" }, { id: botId, kind: "BOT", botDifficulty: "HARD" }],
+    });
+
+    human.send({
+      event: "REMOVE_BOT",
+      requestId: "bot-remove",
+      expectedRevision: 3,
+      botPlayerId: botId,
     });
     await Promise.all([
-      human.waitFor((message) => message.event === "COMMAND_OK" && message.requestId === "bot-human-score"),
-      human.waitFor(roomView((room) => room.revision === 3)),
+      human.waitFor(roomView((room) => room.revision === 4 && (room.players as unknown[]).length === 1)),
+      human.waitFor((message) => message.event === "COMMAND_OK" && message.requestId === "bot-remove"),
     ]);
-    const botRolled = await human.waitFor(roomView((room) => {
-      const gameState = room.game as { currentPlayerId?: string; rollsUsed?: number } | undefined;
-      return room.revision === 4 && gameState?.rollsUsed === 1;
-    }));
-    const players = (botRolled.room as { players: Array<{ id: string; kind: string }> }).players;
-    const botId = players.find((player) => player.kind === "BOT")?.id;
-    expect((botRolled.room as { game: { currentPlayerId: string } }).game.currentPlayerId).toBe(botId);
+
+    human.send({ event: "ADD_BOT", requestId: "bot-add-again", expectedRevision: 4 });
+    await Promise.all([
+      human.waitFor(roomView((room) => room.revision === 5 && room.canStart === true)),
+      human.waitFor((message) => message.event === "COMMAND_OK" && message.requestId === "bot-add-again"),
+    ]);
+    human.send({ event: "START_GAME", requestId: "bot-start" });
+    const started = await human.waitFor(roomView((room) => room.revision === 6 && room.status === "STARTED"));
+    expect(started.room).toMatchObject({
+      game: { phase: "PLAYING", currentPlayerId: session.playerId, rollsUsed: 0 },
+    });
   });
 
   it("runs authoritative Start → Roll → Hold → Roll → Score across two clients", async () => {

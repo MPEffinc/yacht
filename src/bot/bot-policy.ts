@@ -12,9 +12,12 @@ import {
   simulateReroll,
   type SimulationRandom,
 } from "./bot-simulation.js";
+import type { BotDifficulty } from "../protocol.js";
 
 export const BOT_MONTE_CARLO_SAMPLES = 192;
 export const BOT_REROLL_MARGIN = 0.75;
+export const NORMAL_BOT_REGRET_CAP = 4;
+export const NORMAL_BOT_WEIGHTS = [0.72, 0.2, 0.08] as const;
 
 const ZERO_SCORE_PENALTY: Partial<Record<ScoreCategory, number>> = {
   ONES: 1,
@@ -48,12 +51,18 @@ export interface BotDecisionContext {
 export interface BotPolicyOptions {
   samples?: number;
   random?: SimulationRandom;
+  decisionRandom?: SimulationRandom;
   rerollMargin?: number;
 }
 
 export type BotAction =
   | { type: "SCORE"; category: ScoreCategory; utility: number }
   | { type: "REROLL"; heldIndices: number[]; expectedUtility: number };
+
+export interface RankedBotAction {
+  action: BotAction;
+  utility: number;
+}
 
 export interface ScoreChoice {
   category: ScoreCategory;
@@ -153,16 +162,24 @@ function bestScoreWithContext(
   dice: readonly DieValue[],
   context: EvaluationContext,
 ): ScoreChoice {
+  const best = scoreChoicesWithContext(dice, context)[0];
+  if (!best) throw new Error("The bot has no score category available");
+  return best;
+}
+
+function scoreChoicesWithContext(
+  dice: readonly DieValue[],
+  context: EvaluationContext,
+): ScoreChoice[] {
   const scores = scoresForDice(dice);
-  let best: ScoreChoice | null = null;
+  const choices: ScoreChoice[] = [];
   for (const category of SCORE_CATEGORIES) {
     if (context.scoreCard[category] !== null) continue;
     const score = scores[category];
     const utility = utilityForScore(category, score, context);
-    if (!best || utility > best.utility) best = { category, score, utility };
+    choices.push({ category, score, utility });
   }
-  if (!best) throw new Error("The bot has no score category available");
-  return best;
+  return choices.sort((left, right) => right.utility - left.utility);
 }
 
 function holdStrategyBonus(
@@ -201,20 +218,24 @@ export function chooseBestScoreCategory(
   return bestScoreWithContext(dice, createEvaluationContext(scoreCard));
 }
 
-export function chooseBotAction(
+export function evaluateBotActions(
   context: BotDecisionContext,
   options: BotPolicyOptions = {},
-): BotAction {
+): RankedBotAction[] {
   const evaluation = createEvaluationContext(context.scoreCard);
-  const immediate = bestScoreWithContext(context.dice, evaluation);
+  const ranked: RankedBotAction[] = scoreChoicesWithContext(context.dice, evaluation).map(
+    (choice) => ({
+      action: { type: "SCORE", category: choice.category, utility: choice.utility },
+      utility: choice.utility,
+    }),
+  );
   if (context.rollsRemaining <= 0) {
-    return { type: "SCORE", category: immediate.category, utility: immediate.utility };
+    return ranked;
   }
 
   const samples = Math.max(1, Math.floor(options.samples ?? BOT_MONTE_CARLO_SAMPLES));
   const random = options.random ?? createSimulationRandom();
-  let bestHeldIndices: number[] = [];
-  let bestExpectedUtility = Number.NEGATIVE_INFINITY;
+  const rerollMargin = options.rerollMargin ?? BOT_REROLL_MARGIN;
 
   for (const candidate of enumerateRerollCandidates()) {
     let totalUtility = 0;
@@ -224,18 +245,70 @@ export function chooseBotAction(
     }
     const expectedUtility = totalUtility / samples
       + holdStrategyBonus(context.dice, candidate.heldIndices, context.scoreCard);
-    if (expectedUtility > bestExpectedUtility) {
-      bestExpectedUtility = expectedUtility;
-      bestHeldIndices = candidate.heldIndices;
-    }
+    ranked.push({
+      action: {
+        type: "REROLL",
+        heldIndices: candidate.heldIndices,
+        expectedUtility,
+      },
+      utility: expectedUtility - rerollMargin,
+    });
   }
 
-  if (bestExpectedUtility > immediate.utility + (options.rerollMargin ?? BOT_REROLL_MARGIN)) {
-    return {
-      type: "REROLL",
-      heldIndices: bestHeldIndices,
-      expectedUtility: bestExpectedUtility,
-    };
+  return ranked.sort((left, right) => right.utility - left.utility);
+}
+
+export function chooseHardBotAction(
+  context: BotDecisionContext,
+  options: BotPolicyOptions = {},
+): BotAction {
+  const best = evaluateBotActions(context, options)[0];
+  if (!best) throw new Error("The bot has no action available");
+  return best.action;
+}
+
+export function chooseNormalBotAction(
+  context: BotDecisionContext,
+  options: BotPolicyOptions = {},
+): BotAction {
+  const ranked = evaluateBotActions(context, options);
+  return selectNormalBotAction(
+    ranked,
+    options.decisionRandom ?? createSimulationRandom(),
+  );
+}
+
+export function selectNormalBotAction(
+  ranked: readonly RankedBotAction[],
+  decisionRandom: SimulationRandom = createSimulationRandom(),
+): BotAction {
+  const best = ranked[0];
+  if (!best) throw new Error("The bot has no action available");
+  const candidates = ranked
+    .slice(0, 3)
+    .filter((candidate) => candidate.utility >= best.utility - NORMAL_BOT_REGRET_CAP);
+  const weights = NORMAL_BOT_WEIGHTS.slice(0, candidates.length);
+  const missingWeight = NORMAL_BOT_WEIGHTS
+    .slice(candidates.length)
+    .reduce((sum, weight) => sum + weight, 0);
+  const effectiveWeights = weights.map((weight, index) =>
+    index === 0 ? weight + missingWeight : weight,
+  );
+  const selection = decisionRandom();
+  let cumulative = 0;
+  for (let index = 0; index < candidates.length; index += 1) {
+    cumulative += effectiveWeights[index] ?? 0;
+    if (selection < cumulative) return candidates[index]!.action;
   }
-  return { type: "SCORE", category: immediate.category, utility: immediate.utility };
+  return best.action;
+}
+
+export function chooseBotAction(
+  context: BotDecisionContext,
+  difficulty: BotDifficulty,
+  options: BotPolicyOptions = {},
+): BotAction {
+  return difficulty === "HARD"
+    ? chooseHardBotAction(context, options)
+    : chooseNormalBotAction(context, options);
 }

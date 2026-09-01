@@ -54,7 +54,7 @@ export interface YachtApplication {
 
 const securityHeaders = {
   "Content-Security-Policy":
-    "default-src 'self'; style-src 'self'; script-src 'self'; connect-src 'self' ws: wss:; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
+    "default-src 'self'; style-src 'self'; script-src 'self'; connect-src 'self' ws: wss:; font-src 'self' data:; img-src 'self' data:; object-src 'none'; base-uri 'none'; frame-ancestors 'none'",
   "Referrer-Policy": "no-referrer",
   "X-Content-Type-Options": "nosniff",
   "X-Frame-Options": "DENY",
@@ -316,14 +316,6 @@ export function createYachtApplication(
           broadcastRoom(result.room.id);
           break;
         }
-        case "CREATE_BOT_GAME": {
-          if (context.binding) throw new RoomError("INVALID_SESSION");
-          const result = roomService.createBotGame(message.nickname);
-          bindSession(socket, context, result, message.requestId, false);
-          broadcastRoom(result.room.id);
-          botController.scheduleIfNeeded(result.room.id);
-          break;
-        }
         case "JOIN_ROOM": {
           if (context.binding) throw new RoomError("INVALID_SESSION");
           const result = roomService.joinRoom(message.roomId, message.nickname);
@@ -373,6 +365,55 @@ export function createYachtApplication(
         case "START_GAME": {
           const binding = requireBinding(context);
           roomService.startGame(binding.roomId, binding.playerId);
+          broadcastRoom(binding.roomId);
+          botController.scheduleIfNeeded(binding.roomId);
+          sendMessage(socket, {
+            event: "COMMAND_OK",
+            requestId: message.requestId,
+            command: message.event,
+          });
+          break;
+        }
+        case "ADD_BOT": {
+          const binding = requireBinding(context);
+          roomService.addBot(
+            binding.roomId,
+            binding.playerId,
+            message.expectedRevision,
+          );
+          broadcastRoom(binding.roomId);
+          sendMessage(socket, {
+            event: "COMMAND_OK",
+            requestId: message.requestId,
+            command: message.event,
+          });
+          break;
+        }
+        case "REMOVE_BOT": {
+          const binding = requireBinding(context);
+          roomService.removeBot(
+            binding.roomId,
+            binding.playerId,
+            message.expectedRevision,
+            message.botPlayerId,
+          );
+          broadcastRoom(binding.roomId);
+          sendMessage(socket, {
+            event: "COMMAND_OK",
+            requestId: message.requestId,
+            command: message.event,
+          });
+          break;
+        }
+        case "SET_BOT_DIFFICULTY": {
+          const binding = requireBinding(context);
+          roomService.setBotDifficulty(
+            binding.roomId,
+            binding.playerId,
+            message.expectedRevision,
+            message.botPlayerId,
+            message.difficulty,
+          );
           broadcastRoom(binding.roomId);
           sendMessage(socket, {
             event: "COMMAND_OK",
@@ -429,22 +470,6 @@ export function createYachtApplication(
           });
           break;
         }
-        case "REMATCH_BOT_GAME": {
-          const binding = requireBinding(context);
-          roomService.rematchBotGame(
-            binding.roomId,
-            binding.playerId,
-            message.expectedRevision,
-          );
-          broadcastRoom(binding.roomId);
-          botController.scheduleIfNeeded(binding.roomId);
-          sendMessage(socket, {
-            event: "COMMAND_OK",
-            requestId: message.requestId,
-            command: message.event,
-          });
-          break;
-        }
         case "RETURN_TO_LOBBY": {
           const binding = requireBinding(context);
           roomService.returnToLobby(
@@ -453,6 +478,7 @@ export function createYachtApplication(
             message.expectedRevision,
           );
           broadcastRoom(binding.roomId);
+          botController.scheduleIfNeeded(binding.roomId);
           sendMessage(socket, {
             event: "COMMAND_OK",
             requestId: message.requestId,

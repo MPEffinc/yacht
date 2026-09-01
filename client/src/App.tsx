@@ -8,7 +8,12 @@ import {
 } from "react";
 import { AudioControls, AudioDirector } from "./audio-director";
 import { GameBoard } from "./GameBoard";
-import type { PublicRoomSnapshot, ScoreCategory, ServerMessage } from "./protocol";
+import type {
+  BotDifficulty,
+  PublicRoomSnapshot,
+  ScoreCategory,
+  ServerMessage,
+} from "./protocol";
 
 const BASE_PATH = "/yacht/";
 const WEBSOCKET_PATH = `${BASE_PATH}ws`;
@@ -288,19 +293,6 @@ export function App(): ReactElement {
     );
   }
 
-  function playVsBot(): void {
-    const normalizedNickname = requireNickname();
-    if (!normalizedNickname) return;
-    setError(null);
-    setBusy(
-      send({
-        event: "CREATE_BOT_GAME",
-        requestId: requestId(),
-        nickname: normalizedNickname,
-      }),
-    );
-  }
-
   function joinRoom(roomId: string, event?: FormEvent): void {
     event?.preventDefault();
     const normalizedRoomId = normalizeRoomId(roomId);
@@ -355,6 +347,39 @@ export function App(): ReactElement {
     setBusy(send({ event: "START_GAME", requestId: requestId() }));
   }
 
+  function addBot(): void {
+    if (!room) return;
+    setError(null);
+    setBusy(send({
+      event: "ADD_BOT",
+      requestId: requestId(),
+      expectedRevision: room.revision,
+    }));
+  }
+
+  function removeBot(botPlayerId: string): void {
+    if (!room) return;
+    setError(null);
+    setBusy(send({
+      event: "REMOVE_BOT",
+      requestId: requestId(),
+      expectedRevision: room.revision,
+      botPlayerId,
+    }));
+  }
+
+  function setBotDifficulty(botPlayerId: string, difficulty: BotDifficulty): void {
+    if (!room) return;
+    setError(null);
+    setBusy(send({
+      event: "SET_BOT_DIFFICULTY",
+      requestId: requestId(),
+      expectedRevision: room.revision,
+      botPlayerId,
+      difficulty,
+    }));
+  }
+
   function rollDice(): void {
     if (!room) return;
     setError(null);
@@ -399,18 +424,6 @@ export function App(): ReactElement {
     setBusy(
       send({
         event: "RETURN_TO_LOBBY",
-        requestId: requestId(),
-        expectedRevision: room.revision,
-      }),
-    );
-  }
-
-  function rematchBotGame(): void {
-    if (!room) return;
-    setError(null);
-    setBusy(
-      send({
-        event: "REMATCH_BOT_GAME",
         requestId: requestId(),
         expectedRevision: room.revision,
       }),
@@ -514,7 +527,6 @@ export function App(): ReactElement {
             busy={busy || connection !== "CONNECTED"}
             connected={connection === "CONNECTED"}
             onLeave={leaveRoom}
-            onRematchBot={rematchBotGame}
             onReturnToLobby={returnToLobby}
             onRoll={rollDice}
             onScore={scoreCategory}
@@ -549,23 +561,74 @@ export function App(): ReactElement {
                 </span>
               </div>
               <ul className="player-list">
-                {room.players.map((player) => (
-                  <li key={player.id} className={player.id === selfPlayerId ? "self" : ""}>
-                    <div className="player-identity">
-                      <span className="avatar">{[...player.nickname][0]?.toUpperCase()}</span>
-                      <div>
-                        <strong>{player.isHost && <span className="host-star">★ </span>}{player.nickname}</strong>
-                        <small>
-                          {player.id === selfPlayerId ? "YOU" : `PLAYER ${player.joinOrder}`}
-                          {player.connectionState === "DISCONNECTED_GRACE" && " · RECONNECTING"}
-                        </small>
+                {Array.from({ length: room.maxPlayers }, (_, index) => room.players[index] ?? null).map((player, index) =>
+                  player ? (
+                    <li
+                      key={player.id}
+                      className={[
+                        player.id === selfPlayerId ? "self" : "",
+                        player.kind === "BOT" ? "bot-seat" : "",
+                      ].filter(Boolean).join(" ")}
+                    >
+                      <div className="player-identity">
+                        <span className={player.kind === "BOT" ? "avatar bot-avatar" : "avatar"}>
+                          {player.kind === "BOT" ? "AI" : [...player.nickname][0]?.toUpperCase()}
+                        </span>
+                        <div>
+                          <strong>{player.isHost && <span className="host-star">★ </span>}{player.nickname}</strong>
+                          <small>
+                            {player.kind === "BOT"
+                              ? `BOT · ${player.botDifficulty}`
+                              : player.id === selfPlayerId
+                                ? "YOU"
+                                : `PLAYER ${player.joinOrder}`}
+                            {player.connectionState === "DISCONNECTED_GRACE" && " · RECONNECTING"}
+                          </small>
+                        </div>
                       </div>
-                    </div>
-                    <span className={player.isHost ? "ready-badge host" : player.ready ? "ready-badge on" : "ready-badge"}>
-                      {player.isHost ? "HOST" : player.ready ? "Ready" : "Not Ready"}
-                    </span>
-                  </li>
-                ))}
+                      {player.kind === "BOT" ? (
+                        <div className="bot-seat-controls">
+                          <div className="bot-difficulty" aria-label={`${player.nickname} difficulty`}>
+                            {(["NORMAL", "HARD"] as const).map((difficulty) => (
+                              <button
+                                aria-pressed={player.botDifficulty === difficulty}
+                                className={player.botDifficulty === difficulty ? "active" : ""}
+                                disabled={busy || !isHost}
+                                key={difficulty}
+                                onClick={() => setBotDifficulty(player.id, difficulty)}
+                                type="button"
+                              >
+                                {difficulty}
+                              </button>
+                            ))}
+                          </div>
+                          {isHost && (
+                            <button
+                              className="bot-kick"
+                              disabled={busy}
+                              onClick={() => removeBot(player.id)}
+                              type="button"
+                            >
+                              KICK
+                            </button>
+                          )}
+                        </div>
+                      ) : (
+                        <span className={player.isHost ? "ready-badge host" : player.ready ? "ready-badge on" : "ready-badge"}>
+                          {player.isHost ? "HOST" : player.ready ? "READY" : "NOT READY"}
+                        </span>
+                      )}
+                    </li>
+                  ) : (
+                    <li className={isHost ? "empty-seat host-add" : "empty-seat"} key={`empty-${index}`}>
+                      <button disabled={busy || !isHost} onClick={addBot} type="button">
+                        <span aria-hidden="true">+</span>
+                        <strong>{isHost ? "ADD BOT" : "EMPTY SEAT"}</strong>
+                        <small>PLAYER SLOT {index + 1}</small>
+                      </button>
+                    </li>
+                  ),
+                )}
               </ul>
           </div>
 
@@ -624,17 +687,6 @@ export function App(): ReactElement {
                 onChange={(event) => setNickname(event.target.value)}
               />
             </label>
-            <button
-              className="button bot-play-button"
-              data-audio-no-click
-              type="button"
-              disabled={busy}
-              onClick={playVsBot}
-            >
-              <span>INSTANT SINGLE PLAYER</span>
-              {busy ? "PREPARING TABLE..." : "PLAY VS BOT"}
-            </button>
-            <div className="divider bot-divider"><span>MULTIPLAYER</span></div>
             <label>
               MAX PLAYERS
               <select value={maxPlayers} onChange={(event) => setMaxPlayers(Number(event.target.value))}>

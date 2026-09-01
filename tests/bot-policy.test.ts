@@ -4,6 +4,8 @@ import {
   chooseBestScoreCategory,
   chooseBotAction,
   evaluateScoreUtility,
+  selectNormalBotAction,
+  type RankedBotAction,
 } from "../src/bot/bot-policy.js";
 import { createSeededRandom, enumerateRerollCandidates } from "../src/bot/bot-simulation.js";
 import { simulateReroll } from "../src/bot/bot-simulation.js";
@@ -18,7 +20,7 @@ function onlyCategory(category: keyof ScoreCard): ScoreCard {
   return card;
 }
 
-describe("Normal Yacht bot policy", () => {
+describe("Yacht bot policy", () => {
   it("enumerates every legal reroll hold mask except all-held", () => {
     const candidates = enumerateRerollCandidates();
     expect(candidates).toHaveLength(31);
@@ -50,6 +52,7 @@ describe("Normal Yacht bot policy", () => {
   it("pursues a high triple by keeping the matching dice", () => {
     const action = chooseBotAction(
       { dice: [6, 6, 6, 2, 3], rollsRemaining: 2, scoreCard: createEmptyScoreCard() },
+      "HARD",
       { random: createSeededRandom(42), samples: 384 },
     );
     expect(action).toMatchObject({ type: "REROLL", heldIndices: [0, 1, 2] });
@@ -58,6 +61,7 @@ describe("Normal Yacht bot policy", () => {
   it("pursues a large straight by keeping 1-2-3-4", () => {
     const action = chooseBotAction(
       { dice: [1, 2, 3, 4, 6], rollsRemaining: 1, scoreCard: createEmptyScoreCard() },
+      "HARD",
       { random: createSeededRandom(91), samples: 384 },
     );
     expect(action).toMatchObject({ type: "REROLL", heldIndices: [0, 1, 2, 3] });
@@ -77,7 +81,7 @@ describe("Normal Yacht bot policy", () => {
         dice: [1, 2, 3, 4, 6],
         rollsRemaining: 0,
         scoreCard: onlyCategory("YACHT"),
-      }),
+      }, "HARD"),
     ).toMatchObject({ type: "SCORE", category: "YACHT", utility: 0 });
   });
 
@@ -87,11 +91,60 @@ describe("Normal Yacht bot policy", () => {
       const started = performance.now();
       chooseBotAction(
         { dice: [6, 6, 3, 2, 1], rollsRemaining: 2, scoreCard: createEmptyScoreCard() },
+        "HARD",
         { random: createSeededRandom(run + 1) },
       );
       durations.push(performance.now() - started);
     }
     const average = durations.reduce((total, duration) => total + duration, 0) / durations.length;
     expect(average).toBeLessThan(75);
+  });
+
+  it("lets Normal choose nearby second and third actions with seeded weights", () => {
+    const ranked: RankedBotAction[] = [
+      { action: { type: "SCORE", category: "SIXES", utility: 25 }, utility: 25 },
+      { action: { type: "SCORE", category: "CHOICE", utility: 24 }, utility: 24 },
+      { action: { type: "SCORE", category: "FOURS", utility: 22 }, utility: 22 },
+    ];
+    expect(selectNormalBotAction(ranked, () => .1)).toMatchObject({ category: "SIXES" });
+    expect(selectNormalBotAction(ranked, () => .75)).toMatchObject({ category: "CHOICE" });
+    expect(selectNormalBotAction(ranked, () => .95)).toMatchObject({ category: "FOURS" });
+  });
+
+  it("returns excluded Normal probability to best and never exceeds the regret cap", () => {
+    const ranked: RankedBotAction[] = [
+      { action: { type: "SCORE", category: "YACHT", utility: 50 }, utility: 50 },
+      { action: { type: "SCORE", category: "ONES", utility: 0 }, utility: 0 },
+      { action: { type: "SCORE", category: "TWOS", utility: -2 }, utility: -2 },
+    ];
+    expect(selectNormalBotAction(ranked, () => .999)).toMatchObject({ category: "YACHT" });
+  });
+
+  it("makes the same Normal decision for the same injected seed", () => {
+    const context = {
+      dice: [1, 2, 3, 4, 6] as const,
+      rollsRemaining: 0,
+      scoreCard: createEmptyScoreCard(),
+    };
+    const first = chooseBotAction(context, "NORMAL", {
+      random: createSeededRandom(31),
+      decisionRandom: createSeededRandom(77),
+    });
+    const second = chooseBotAction(context, "NORMAL", {
+      random: createSeededRandom(31),
+      decisionRandom: createSeededRandom(77),
+    });
+    expect(first).toEqual(second);
+  });
+
+  it("never throws away a made Yacht for a zero category on Normal", () => {
+    expect(chooseBotAction({
+      dice: [6, 6, 6, 6, 6],
+      rollsRemaining: 0,
+      scoreCard: createEmptyScoreCard(),
+    }, "NORMAL", { decisionRandom: () => .999 })).toMatchObject({
+      type: "SCORE",
+      category: "YACHT",
+    });
   });
 });

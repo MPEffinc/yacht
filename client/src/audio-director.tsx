@@ -11,7 +11,6 @@ import {
   audioScene,
   finishedAudioAsset,
   isFinishTransition,
-  isBotRematchTransition,
   isGameStartTransition,
   isRollTransition,
   joinedPlayerIds,
@@ -175,16 +174,7 @@ export function AudioDirector({
       cancelScheduled();
       audioManager.restoreAllBgmDucks(200);
       const scene = audioScene(room);
-      if (room.mode === "BOT" && scene === "PLAYING") {
-        audioManager.stopBgm({ fadeMs: 300 });
-        void audioManager.playSfx("game_start", {
-          dedupeKey: `game-start:${room.id}:${room.revision}`,
-          priority: "high",
-        });
-        schedule(() => void audioManager.playBgm("bgm_main", { fadeMs: 600 }), GAME_MAIN_BGM_DELAY_MS);
-      } else {
-        void audioManager.playBgm(scene === "LOBBY" ? "bgm_lobby" : "bgm_main", { fadeMs: 500 });
-      }
+      void audioManager.playBgm(scene === "LOBBY" ? "bgm_lobby" : "bgm_main", { fadeMs: 500 });
       if (scene === "FINISHED") audioManager.duckBgm("finished", { level: .18, fadeMs: 0 });
       return;
     }
@@ -200,7 +190,7 @@ export function AudioDirector({
       });
     }
 
-    const gameStarted = isGameStartTransition(previous, room) || isBotRematchTransition(previous, room);
+    const gameStarted = isGameStartTransition(previous, room);
     if (gameStarted) {
       cancelScheduled();
       audioManager.restoreAllBgmDucks(120);

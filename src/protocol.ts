@@ -42,13 +42,6 @@ export const clientMessageSchema = z.discriminatedUnion("event", [
     .strict(),
   z
     .object({
-      event: z.literal("CREATE_BOT_GAME"),
-      requestId: requestIdSchema,
-      nickname: nicknameSchema,
-    })
-    .strict(),
-  z
-    .object({
       event: z.literal("JOIN_ROOM"),
       requestId: requestIdSchema,
       roomId: roomIdSchema,
@@ -84,6 +77,30 @@ export const clientMessageSchema = z.discriminatedUnion("event", [
     .strict(),
   z
     .object({
+      event: z.literal("ADD_BOT"),
+      requestId: requestIdSchema,
+      expectedRevision: expectedRevisionSchema,
+    })
+    .strict(),
+  z
+    .object({
+      event: z.literal("REMOVE_BOT"),
+      requestId: requestIdSchema,
+      expectedRevision: expectedRevisionSchema,
+      botPlayerId: z.string().uuid(),
+    })
+    .strict(),
+  z
+    .object({
+      event: z.literal("SET_BOT_DIFFICULTY"),
+      requestId: requestIdSchema,
+      expectedRevision: expectedRevisionSchema,
+      botPlayerId: z.string().uuid(),
+      difficulty: z.enum(["NORMAL", "HARD"]),
+    })
+    .strict(),
+  z
+    .object({
       event: z.literal("ROLL_DICE"),
       requestId: requestIdSchema,
       expectedRevision: expectedRevisionSchema,
@@ -112,25 +129,19 @@ export const clientMessageSchema = z.discriminatedUnion("event", [
       expectedRevision: expectedRevisionSchema,
     })
     .strict(),
-  z
-    .object({
-      event: z.literal("REMATCH_BOT_GAME"),
-      requestId: requestIdSchema,
-      expectedRevision: expectedRevisionSchema,
-    })
-    .strict(),
 ]);
 
 export type ClientMessage = z.infer<typeof clientMessageSchema>;
 export type RoomStatus = "LOBBY" | "STARTED";
-export type RoomMode = "MULTIPLAYER" | "BOT";
 export type PlayerKind = "HUMAN" | "BOT";
+export type BotDifficulty = "NORMAL" | "HARD";
 export type ConnectionState = "CONNECTED" | "DISCONNECTED_GRACE";
 
 export interface PublicPlayer {
   id: string;
   nickname: string;
   kind: PlayerKind;
+  botDifficulty: BotDifficulty | null;
   ready: boolean;
   connectionState: ConnectionState;
   joinOrder: number;
@@ -139,7 +150,6 @@ export interface PublicPlayer {
 
 export interface PublicRoomSnapshot {
   id: string;
-  mode: RoomMode;
   revision: number;
   status: RoomStatus;
   createdAt: string;
@@ -155,7 +165,6 @@ export type RoomErrorCode =
   | "INVALID_MESSAGE"
   | "INVALID_NICKNAME"
   | "ROOM_NOT_FOUND"
-  | "ROOM_NOT_JOINABLE"
   | "ROOM_FULL"
   | "DUPLICATE_NICKNAME"
   | "INVALID_SESSION"
@@ -164,6 +173,7 @@ export type RoomErrorCode =
   | "PLAYERS_NOT_READY"
   | "GAME_ALREADY_STARTED"
   | "GAME_NOT_FINISHED"
+  | "INVALID_BOT_TARGET"
   | "STALE_REVISION"
   | GameErrorCode;
 
@@ -171,7 +181,6 @@ const errorMessages: Record<RoomErrorCode, string> = {
   INVALID_MESSAGE: "THE REQUEST FORMAT IS INVALID.",
   INVALID_NICKNAME: "ENTER A NICKNAME BETWEEN 1 AND 20 CHARACTERS.",
   ROOM_NOT_FOUND: "THIS ROOM DOES NOT EXIST.",
-  ROOM_NOT_JOINABLE: "THIS IS A PRIVATE BOT TABLE.",
   ROOM_FULL: "THIS ROOM IS FULL.",
   DUPLICATE_NICKNAME: "THAT NICKNAME IS ALREADY IN USE.",
   INVALID_SESSION: "THIS SESSION IS INVALID. PLEASE JOIN AGAIN.",
@@ -180,6 +189,7 @@ const errorMessages: Record<RoomErrorCode, string> = {
   PLAYERS_NOT_READY: "ALL GUESTS MUST BE CONNECTED AND READY.",
   GAME_ALREADY_STARTED: "THIS GAME HAS ALREADY STARTED.",
   GAME_NOT_FINISHED: "FINISH THE CURRENT GAME BEFORE STARTING A REMATCH.",
+  INVALID_BOT_TARGET: "THAT PLAYER IS NOT A BOT.",
   STALE_REVISION: "THE GAME STATE CHANGED. PLEASE TRY AGAIN.",
   GAME_NOT_STARTED: "THE GAME HAS NOT STARTED.",
   GAME_FINISHED: "THIS GAME HAS ALREADY FINISHED.",
@@ -209,11 +219,13 @@ export type ServerMessage =
       command:
         | "SET_READY"
         | "START_GAME"
+        | "ADD_BOT"
+        | "REMOVE_BOT"
+        | "SET_BOT_DIFFICULTY"
         | "ROLL_DICE"
         | "SET_HELD_DICE"
         | "SCORE_CATEGORY"
-        | "RETURN_TO_LOBBY"
-        | "REMATCH_BOT_GAME";
+        | "RETURN_TO_LOBBY";
     }
   | { event: "LEFT"; requestId: string; roomId: string }
   | { event: "GAME_ABORTED"; message: string }

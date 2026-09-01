@@ -1,6 +1,6 @@
 # Yacht Dice Online
 
-Yacht Dice Online의 서버 권위형 구현입니다. `/yacht/` 하위 경로에서 2~6명이 로비를 만들거나, Lobby 없이 즉시 1 Human vs 1 Normal BOT 게임을 시작할 수 있습니다. 주사위, 점수, 턴, 승자는 모두 서버가 결정합니다.
+Yacht Dice Online의 서버 권위형 구현입니다. `/yacht/` 하위 경로에서 2~6석 테이블을 만들고 Human과 server-owned BOT을 자유롭게 조합할 수 있습니다. 주사위, 점수, 턴, 승자는 모두 서버가 결정합니다.
 
 ## Architecture
 
@@ -64,17 +64,18 @@ WebSocket client command:
 ```text
 DIAGNOSTIC_PING
 CREATE_ROOM
-CREATE_BOT_GAME
 JOIN_ROOM
 RECONNECT_ROOM
 LEAVE_ROOM
 SET_READY
 START_GAME
+ADD_BOT
+REMOVE_BOT
+SET_BOT_DIFFICULTY
 ROLL_DICE
 SET_HELD_DICE
 SCORE_CATEGORY
 RETURN_TO_LOBBY
-REMATCH_BOT_GAME
 ```
 
 주요 server event는 `SESSION_ESTABLISHED`, `ROOM_VIEW`, `COMMAND_OK`, `GAME_ABORTED`, `LEFT`, `ERROR`, `DIAGNOSTIC_PONG`입니다. 모든 client message는 Zod strict schema로 검증됩니다. 게임 명령은 최신 `ROOM_VIEW.revision`을 `expectedRevision`으로 보내며 stale 명령은 거절 후 최신 snapshot으로 resync됩니다.
@@ -86,7 +87,9 @@ REMATCH_BOT_GAME
 - Node `crypto` 기반 Room ID, Player ID, session token
 - 연결 종료 후 기본 60초 동안 `DISCONNECTED_GRACE` 유지
 - 명시적 퇴장 또는 grace 만료 시 가장 먼저 참가한 connected player에게 Host 이전
-- Host를 포함한 모든 플레이어가 Ready이고 2명 이상일 때만 Host가 시작 가능
+- Host가 빈 seat를 눌러 최대 인원까지 BOT을 추가하고 BOT별 `NORMAL`/`HARD`를 설정하거나 제거 가능
+- 모든 Human이 연결되어 있고 Host 이외 Human guest가 Ready이며 전체 참가자가 2명 이상일 때 Host가 시작 가능; BOT은 Ready 불필요
+- BOT은 session/reconnect가 없고 Host가 될 수 없으며 Host 이전 후보에서도 제외
 - `STARTED` 방에는 신규 참가자나 spectator를 허용하지 않음
 - 상태 변경마다 revision 증가 및 전체 참가자에게 authoritative snapshot broadcast
 
@@ -133,13 +136,13 @@ START_GAME → 초기 dice(null) → ROLL_DICE
 
 Production dice는 Node `crypto.randomInt(1, 7)`을 사용하며 테스트에서는 deterministic roller를 주입합니다.
 
-## 1P vs BOT
+## Multiplayer BOT
 
-HOME의 `PLAY VS BOT`은 `CREATE_BOT_GAME` 한 번으로 내부 2인 room과 게임을 만들고 바로 GameBoard를 엽니다. `YACHT BOT`은 WebSocket이나 session token이 없는 server-owned virtual player이며 Host가 되거나 다른 사용자를 받지 않습니다. Human refresh/reconnect 동안 현재 게임은 그대로 보존되고, Human 연결이 끊긴 동안 BOT turn은 정지합니다. Human이 명시적으로 나가거나 grace가 만료되면 BOT room 전체를 삭제합니다.
+BOT은 전용 single-player mode가 아니라 일반 Room의 participant입니다. HOME에서 테이블을 만든 뒤 Host가 최대 인원만큼 표시되는 빈 seat의 `ADD BOT`을 누릅니다. 각 BOT은 고유한 `YACHT BOT N` 이름, null session token, 독립적인 `NORMAL`/`HARD` 난이도를 가지며 여러 BOT과 Human을 원하는 순서로 함께 둘 수 있습니다. 모든 connected Human이 사라지면 BOT-only room은 삭제됩니다.
 
-Normal BOT은 실제 결과와 분리된 simulation PRNG로 31개의 합법적인 KEEP mask를 각각 192회 Monte Carlo 평가합니다. 점수 utility는 raw score, upper bonus와 달성 가능성, 남은 category 수에 따른 sacrifice cost, 낮은 Choice reserve를 포함합니다. 실제 Roll/KEEP/Score는 Human과 똑같이 `RoomService.rollDice`, `setHeldDice`, `scoreCategory`를 거치므로 production dice는 계속 crypto RNG가 결정합니다.
+두 난이도는 실제 결과와 분리된 simulation PRNG로 31개의 합법적인 KEEP mask를 각각 192회 Monte Carlo 평가합니다. 점수 utility는 raw score, upper bonus와 달성 가능성, 남은 category 수에 따른 sacrifice cost, 낮은 Choice reserve, Large Straight 전략 보정을 포함합니다. `HARD`는 이 strong Monte Carlo/heuristic policy의 최고 utility 행동을 선택합니다. `NORMAL`도 같은 평가를 사용하지만 최고점과 utility 차이가 4 이하인 상위 3개 행동 중 72%/20%/8%로 선택해 가끔 합리적인 차선책을 둡니다. 빠진 차선 후보의 확률은 최고 행동으로 돌아갑니다.
 
-BOT action에는 turn 시작 700ms, Roll 뒤 1300ms, KEEP 뒤 550ms, Score 전 850ms delay가 있어 기존 주사위·KEEP·조합·점수 기록 연출과 오디오가 끝날 시간을 확보합니다. 종료 후 `REMATCH_BOT_GAME`은 room/player/session ID를 보존하면서 Lobby 없이 새 게임을 만들고 Human부터 시작합니다.
+실제 Roll/KEEP/Score는 Human과 똑같이 `RoomService.rollDice`, `setHeldDice`, `scoreCategory`를 거치므로 production dice는 계속 crypto RNG가 결정합니다. BOT presentation random도 simulation/선택/실제 dice RNG와 분리됩니다. Turn 시작 1.2–2.0초, Roll 결과 확인은 Normal 2.0–3.1초·Hard 2.5–3.8초, KEEP 뒤 1.0–1.6초, Score 전 1.5–2.5초 범위의 jitter를 사용하며 Special/Yacht 조합은 alert를 볼 수 있도록 더 기다립니다.
 
 ## Disconnect policy
 
@@ -149,7 +152,7 @@ BOT action에는 turn 시작 700ms, Roll 뒤 1300ms, KEEP 뒤 550ms, Score 전 8
 
 Roll 결과는 항상 server-authoritative snapshot으로 먼저 확정되며, 브라우저는 실제로 다시 굴린 주사위에만 짧은 presentation animation을 적용합니다. 모든 주사위를 KEEP한 재굴림은 서버와 클라이언트가 함께 차단합니다. 점수와 진행 중 퇴장은 자체 confirmation dialog로 확인하며, reconnect 후에는 보존된 authoritative state를 그대로 복구합니다.
 
-경기 종료 후 Host가 `RETURN_TO_LOBBY`를 보내면 같은 room/player/session을 유지한 채 모든 Ready만 초기화합니다. 각 플레이어가 다시 Ready하고 Host가 `START_GAME`을 실행해야 새 점수표와 주사위 상태로 재경기가 시작됩니다.
+경기 종료 후 Host가 `RETURN_TO_LOBBY`를 보내면 같은 room/player/session과 BOT 난이도를 유지한 채 Human Ready만 초기화합니다. Lobby에서 BOT을 추가·제거하거나 난이도를 바꿀 수 있고, Human guest가 다시 Ready한 뒤 Host가 `START_GAME`을 실행해야 새 점수표와 주사위 상태로 재경기가 시작됩니다.
 
 ## Audio
 

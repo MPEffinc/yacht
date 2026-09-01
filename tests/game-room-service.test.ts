@@ -165,6 +165,21 @@ describe("RoomService Phase 2 integration", () => {
     expect(service.getRoom(roomId)?.players.get(guestId)?.sessionToken).toBe(guestToken);
   });
 
+  it("preserves BOT seats and their difficulty when returning to the lobby", () => {
+    const service = new RoomService();
+    const created = service.createRoom("Host", 4);
+    service.addBot(created.room.id, created.player.id, created.room.revision);
+    const bot = [...created.room.players.values()].find((player) => player.kind === "BOT")!;
+    service.setBotDifficulty(created.room.id, created.player.id, created.room.revision, bot.id, "HARD");
+    service.startGame(created.room.id, created.player.id);
+    created.room.game!.phase = "FINISHED";
+    created.room.game!.currentPlayerId = null;
+    service.returnToLobby(created.room.id, created.player.id, created.room.revision);
+    expect(service.getSnapshot(created.room.id).players).toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: bot.id, kind: "BOT", botDifficulty: "HARD" }),
+    ]));
+  });
+
   it("enforces rematch host, finished-game, and revision permissions", () => {
     const context = startedRoom();
     const { service, roomId, hostId, guestId } = context;
